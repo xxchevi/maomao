@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 自定义样式 */
+.cat-card {
+  @apply bg-white rounded-lg shadow-md p-4 border border-gray-200;
+}
+
+.cat-button {
+  @apply px-4 py-2 rounded-lg font-medium transition-colors duration-200;
+}
+
+.cat-button-primary {
+  @apply bg-blue-500 text-white hover:bg-blue-600;
+}
+
+.cat-button-secondary {
+  @apply bg-gray-200 text-gray-800 hover:bg-gray-300;
+}
+
+.cat-input {
+  @apply w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500;
+}
+
+.cat-progress {
+  @apply w-full bg-gray-200 rounded-full h-2.5;
+}
+
+.cat-progress-bar {
+  @apply bg-blue-600 h-2.5 rounded-full transition-all duration-300;
+}
+
+/* 游戏特定样式 */
+.idle-task-card {
+  @apply bg-gradient-to-r from-purple-100 to-pink-100 border-purple-200;
+}
+
+.collection-item {
+  @apply flex items-center space-x-2 p-2 rounded hover:bg-gray-50;
+}
+
+.inventory-grid {
+  @apply grid grid-cols-6 gap-2;
+}
+
+.inventory-slot {
+  @apply w-12 h-12 border-2 border-gray-300 rounded flex items-center justify-center bg-gray-50;
+}
+
+.inventory-slot.filled {
+  @apply border-blue-400 bg-blue-50;
+}

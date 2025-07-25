@@ -1,0 +1,58 @@
+<svg width="400" height="300" viewBox="0 0 400 300" xmlns="http://www.w3.org/2000/svg">
+  <!-- 背景 -->
+  <rect width="400" height="300" fill="#2F2F2F"/>
+  
+  <!-- 洞穴入口 -->
+  <path d="M 50 150 Q 200 50 350 150 L 350 300 L 50 300 Z" fill="#1C1C1C"/>
+  
+  <!-- 矿洞轨道 -->
+  <rect x="180" y="250" width="40" height="8" fill="#8B4513"/>
+  <rect x="175" y="258" width="50" height="4" fill="#654321"/>
+  
+  <!-- 矿车 -->
+  <rect x="190" y="240" width="20" height="10" fill="#696969"/>
+  <circle cx="195" cy="255" r="3" fill="#2F2F2F"/>
+  <circle cx="205" cy="255" r="3" fill="#2F2F2F"/>
+  
+  <!-- 矿石 -->
+  <polygon points="100,200 110,190 120,200 115,210" fill="#4169E1"/> <!-- 蓝宝石 -->
+  <polygon points="280,180 290,170 300,180 295,190" fill="#DC143C"/> <!-- 红宝石 -->
+  <polygon points="150,220 160,210 170,220 165,230" fill="#32CD32"/> <!-- 绿宝石 -->
+  <polygon points="250,210 260,200 270,210 265,220" fill="#FFD700"/> <!-- 黄金 -->
+  
+  <!-- 水晶 -->
+  <polygon points="120,160 130,140 140,160 135,180" fill="#E6E6FA" opacity="0.8"/>
+  <polygon points="260,150 270,130 280,150 275,170" fill="#E6E6FA" opacity="0.8"/>
+  
+  <!-- 岩石纹理 -->
+  <circle cx="80" cy="180" r="8" fill="#696969"/>
+  <circle cx="320" cy="190" r="10" fill="#696969"/>
+  <circle cx="200" cy="170" r="6" fill="#696969"/>
+  
+  <!-- 矿工工具 -->
+  <!-- 镐子 -->
+  <line x1="60" y1="220" x2="80" y2="200" stroke="#8B4513" stroke-width="3"/>
+  <polygon points="80,200 85,195 90,200 85,205" fill="#C0C0C0"/>
+  
+  <!-- 灯笼光源 -->
+  <circle cx="200" cy="120" r="15" fill="#FFD700" opacity="0.6"/>
+  <circle cx="200" cy="120" r="8" fill="#FFA500"/>
+  <rect x="198" y="135" width="4" height="10" fill="#8B4513"/>
+  
+  <!-- 光线效果 -->
+  <path d="M 200 120 L 150 180 L 250 180 Z" fill="#FFD700" opacity="0.2"/>
+  
+  <!-- 矿物闪光效果 -->
+  <circle cx="105" cy="195" r="2" fill="#FFFFFF" opacity="0.8"/>
+  <circle cx="285" cy="175" r="2" fill="#FFFFFF" opacity="0.8"/>
+  <circle cx="155" cy="215" r="2" fill="#FFFFFF" opacity="0.8"/>
+  <circle cx="255" cy="205" r="2" fill="#FFFFFF" opacity="0.8"/>
+  
+  <!-- 洞穴深处的神秘光芒 -->
+  <circle cx="200" cy="200" r="30" fill="#4B0082" opacity="0.3"/>
+  <circle cx="200" cy="200" r="20" fill="#8A2BE2" opacity="0.3"/>
+  <circle cx="200" cy="200" r="10" fill="#9370DB" opacity="0.3"/>
+  
+  <!-- 文字标识 -->
+  <text x="200" y="280" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" fill="#C0C0C0">⛏️ 神秘矿洞 ⛏️</text>
+</svg>

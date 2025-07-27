@@ -1,80 +1,97 @@
-import { userDb } from '../../database/db'
+import bcrypt from 'bcryptjs'
+import jwt from 'jsonwebtoken'
+import { PrismaClient } from '@prisma/client'
+
+const prisma = new PrismaClient()
 
 export default defineEventHandler(async (event) => {
   try {
-    const body = await readBody(event)
-    const { username, email, password } = body
-    
-    // 验证输入
-    if (!username || !password) {
+    const { username, nickname, email, password } = await readBody(event)
+
+    if (!username || !nickname || !password) {
       throw createError({
         statusCode: 400,
-        statusMessage: '用户名和密码不能为空'
+        statusMessage: '用户名、昵称和密码是必填的'
       })
     }
-    
-    // 验证用户名长度
-    if (username.length < 3 || username.length > 20) {
-      throw createError({
-        statusCode: 400,
-        statusMessage: '用户名长度必须在3-20个字符之间'
-      })
-    }
-    
+
     if (password.length < 6) {
       throw createError({
         statusCode: 400,
-        statusMessage: '密码长度至少6位'
+        statusMessage: '密码长度至少为6位'
       })
     }
-    
+
+    // 检查邮箱是否已存在（如果提供了邮箱）
+    if (email) {
+      const existingUserByEmail = await prisma.user.findUnique({
+        where: { email }
+      })
+
+      if (existingUserByEmail) {
+        throw createError({
+          statusCode: 400,
+          statusMessage: '邮箱已被注册'
+        })
+      }
+    }
+
     // 检查用户名是否已存在
-    const existingUser = userDb.findByUsername(username)
-    if (existingUser) {
+    const existingUserByUsername = await prisma.user.findUnique({
+      where: { username }
+    })
+
+    if (existingUserByUsername) {
       throw createError({
-        statusCode: 409,
-        statusMessage: '用户名已存在'
+        statusCode: 400,
+        statusMessage: '用户名已被使用'
       })
     }
-    
-    // 创建新用户
-    const newUser = await userDb.create({
-      username,
-      password,
-      email: email || undefined,
-      level: 1,
-      experience: 0,
-      coins: 0,
-      gems: 0
+
+    // 加密密码
+    const hashedPassword = await bcrypt.hash(password, 12)
+
+    // 创建用户和角色
+    const user = await prisma.user.create({
+      data: {
+        email: email || null,
+        username,
+        password: hashedPassword,
+        character: {
+          create: {
+            name: nickname
+          }
+        }
+      },
+      include: {
+        character: true
+      }
     })
-    
-    // 返回成功信息（不包含密码）
-    const { password: _, ...userInfo } = newUser
-    
+
+    // 生成JWT token
+    const config = useRuntimeConfig()
+    const token = jwt.sign(
+      { userId: user.id, email: user.email },
+      config.jwtSecret,
+      { expiresIn: '7d' }
+    )
+
     return {
       success: true,
-      message: '注册成功',
-      user: userInfo
+      data: {
+        token,
+        user: {
+          id: user.id,
+          email: user.email,
+          username: user.username
+        },
+        character: user.character
+      }
     }
-  } catch (error: any) {
-    // 如果是已知错误，直接抛出
-    if (error.statusCode) {
-      throw error
-    }
-
-    // 处理数据库约束错误
-    if (error.message && error.message.includes('UNIQUE constraint failed')) {
-      throw createError({
-        statusCode: 409,
-        statusMessage: '用户名已存在'
-      })
-    }
-
-    // 未知错误
-    console.error('注册错误:', error)
+  } catch (error:any) {
     throw createError({
-      statusCode: 500,
-      statusMessage: '服务器内部错误'
+      statusCode: error.statusCode || 500,
+      statusMessage: error.statusMessage || '注册失败'
     })
   }
 })

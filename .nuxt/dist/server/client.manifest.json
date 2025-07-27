@@ -7,12 +7,12 @@
     "module": true,
     "resourceType": "script"
   },
-  "D:/demo/maomao2/node_modules/nuxt/dist/app/entry.js": {
+  "D:/demo/maomao4/node_modules/nuxt/dist/app/entry.js": {
     "resourceType": "script",
     "module": true,
     "prefetch": true,
     "preload": true,
     "isEntry": true,
-    "file": "D:/demo/maomao2/node_modules/nuxt/dist/app/entry.js"
+    "file": "D:/demo/maomao4/node_modules/nuxt/dist/app/entry.js"
   }
 }

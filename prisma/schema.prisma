@@ -12,64 +12,139 @@ datasource db {
 
 model User {
   id        String   @id @default(cuid())
+  email     String?  @unique
   username  String   @unique
-  email     String   @unique
   password  String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   
-  // 关联的游戏数据
-  gameData     GameData?
-  collectTasks CollectTask[]
+  // 游戏角色
+  character Character?
   
   @@map("users")
 }
 
-model GameData {
-  id         String   @id @default(cuid())
-  userId     String   @unique
-  experience Int      @default(0)
-  level      Int      @default(1)
-  inventory  String   @default("{}")
-  skills     String   @default("{}")
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+model Character {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  level     Int      @default(1)
+  exp       Int      @default(0)
   
-  @@map("game_data")
+  // 技能等级
+  miningLevel     Int @default(1)
+  gatheringLevel  Int @default(1)
+  fishingLevel    Int @default(1)
+  cookingLevel    Int @default(1)
+  craftingLevel   Int @default(1)
+  
+  // 技能经验
+  miningExp       Int @default(0)
+  gatheringExp    Int @default(0)
+  fishingExp      Int @default(0)
+  cookingExp      Int @default(0)
+  craftingExp     Int @default(0)
+  
+  // 货币
+  coins     Int      @default(100)
+  
+  // 离线时间
+  lastOnline DateTime @default(now())
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // 仓库物品
+  inventory InventoryItem[]
+  
+  // 离线任务
+  offlineTasks OfflineTask[]
+  
+  @@map("characters")
 }
 
-model CollectTask {
+model Item {
+  id          String @id @default(cuid())
+  name        String
+  description String?
+  type        String // 'resource', 'tool', 'food', 'material'
+  rarity      String @default("common") // 'common', 'uncommon', 'rare', 'epic', 'legendary'
+  value       Int    @default(1)
+  
+  // 物品属性
+  stackable   Boolean @default(true)
+  maxStack    Int     @default(99)
+  
+  // 关联
+  inventoryItems InventoryItem[]
+  
+  @@map("items")
+}
+
+model InventoryItem {
   id          String    @id @default(cuid())
-  userId      String
-  taskType    String
-  duration    Int       // 持续时间（秒）
-  startTime   DateTime
-  endTime     DateTime
-  completedAt DateTime?
-  status      String    @default("active") // active, completed, cancelled
-  rewards     String?   // JSON格式的奖励数据
+  characterId String
+  character   Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  
+  itemId      String
+  item        Item      @relation(fields: [itemId], references: [id])
+  
+  quantity    Int       @default(1)
+  
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  @@map("collect_tasks")
+  @@unique([characterId, itemId])
+  @@map("inventory_items")
 }
 
-model QueueTask {
+model OfflineTask {
   id          String    @id @default(cuid())
-  userId      String
-  taskType    String
-  count       Int       @default(1)
-  status      String    @default("pending") // pending, processing, completed, failed
-  progress    Float     @default(0)
-  startedAt   DateTime?
+  characterId String
+  character   Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  
+  type        String    // 'mining', 'gathering', 'fishing', 'cooking', 'crafting'
+  status      String    @default("active") // 'active', 'completed', 'cancelled'
+  
+  // 任务参数
+  targetId    String?   // 目标物品ID或位置ID
+  duration    Int       // 任务持续时间（秒）
+  progress    Int       @default(0) // 当前进度
+  
+  // 奖励
+  expReward   Int       @default(0)
+  itemRewards String?   // JSON格式的物品奖励（存储为字符串）
+  
+  startedAt   DateTime  @default(now())
   completedAt DateTime?
-  rewards     String?   // JSON格式的奖励数据
+  
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   
-  @@map("queue_tasks")
+  @@map("offline_tasks")
+}
+
+model GameResource {
+  id          String @id @default(cuid())
+  name        String
+  type        String // 'mining_node', 'gathering_spot', 'fishing_spot'
+  
+  // 位置信息
+  area        String
+  
+  // 资源属性
+  itemId      String // 产出的物品ID
+  baseTime    Int    // 基础采集时间（秒）
+  expReward   Int    // 经验奖励
+  levelReq    Int    @default(1) // 等级需求
+  
+  // 稀有度和产出率
+  rarity      String @default("common")
+  dropRate    Float  @default(1.0)
+  
+  createdAt   DateTime @default(now())
+  
+  @@map("game_resources")
 }

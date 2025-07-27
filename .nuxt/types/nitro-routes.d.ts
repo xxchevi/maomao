@@ -6,29 +6,20 @@ declare module "nitropack/types" {
     '/api/auth/login': {
       'post': Simplify<Serialize<Awaited<ReturnType<typeof import('../../server/api/auth/login.post').default>>>>
     }
-    '/api/auth/logout': {
-      'post': Simplify<Serialize<Awaited<ReturnType<typeof import('../../server/api/auth/logout.post').default>>>>
-    }
     '/api/auth/me': {
       'get': Simplify<Serialize<Awaited<ReturnType<typeof import('../../server/api/auth/me.get').default>>>>
     }
     '/api/auth/register': {
       'post': Simplify<Serialize<Awaited<ReturnType<typeof import('../../server/api/auth/register.post').default>>>>
     }
-    '/api/game/collect/start': {
-      'post': Simplify<Serialize<Awaited<ReturnType<typeof import('../../server/api/game/collect/start.post').default>>>>
+    '/api/game/inventory': {
+      'get': Simplify<Serialize<Awaited<ReturnType<typeof import('../../server/api/game/inventory.get').default>>>>
     }
-    '/api/game/collect/stop': {
-      'post': Simplify<Serialize<Awaited<ReturnType<typeof import('../../server/api/game/collect/stop.post').default>>>>
+    '/api/game/queues': {
+      'get': Simplify<Serialize<Awaited<ReturnType<typeof import('../../server/api/game/queues.get').default>>>>
     }
-    '/api/game/state': {
-      'get': Simplify<Serialize<Awaited<ReturnType<typeof import('../../server/api/game/state.get').default>>>>
-    }
-    '/api/game/user/data': {
-      'get': Simplify<Serialize<Awaited<ReturnType<typeof import('../../server/api/game/user/data.get').default>>>>
-    }
-    '/api/game/user/online': {
-      'get': Simplify<Serialize<Awaited<ReturnType<typeof import('../../server/api/game/user/online.get').default>>>>
+    '/api/game/resources': {
+      'get': Simplify<Serialize<Awaited<ReturnType<typeof import('../../server/api/game/resources.get').default>>>>
     }
     '/__nuxt_error': {
       'default': Simplify<Serialize<Awaited<ReturnType<typeof import('../../node_modules/nuxt/dist/core/runtime/nitro/handlers/renderer').default>>>>

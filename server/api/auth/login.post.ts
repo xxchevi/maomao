@@ -1,84 +1,76 @@
+import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
-import { userDb } from '../../database/db'
+import { PrismaClient } from '@prisma/client'
 
-// JWT密钥 - 在生产环境中应该使用环境变量
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key'
+const prisma = new PrismaClient()
 
 export default defineEventHandler(async (event) => {
   try {
-    // 验证请求方法
-    if (event.node.req.method !== 'POST') {
-      throw createError({
-        statusCode: 405,
-        statusMessage: 'Method Not Allowed'
-      })
-    }
-
-    // 获取请求体
-    const body = await readBody(event)
-    const { username, password } = body
+    const { username, password } = await readBody(event)
 
     if (!username || !password) {
       throw createError({
         statusCode: 400,
-        statusMessage: 'Username and password are required'
+        statusMessage: '用户名和密码不能为空'
       })
     }
 
     // 查找用户
-    const user = userDb.findByUsername(username)
+    const user = await prisma.user.findUnique({
+      where: { username },
+      include: {
+        character: true
+      }
+    })
+
     if (!user) {
       throw createError({
         statusCode: 401,
-        statusMessage: 'Invalid username or password'
+        statusMessage: '用户名或密码错误'
       })
     }
 
     // 验证密码
-    const isValidPassword = await userDb.verifyPassword(password, user.password)
+    const isValidPassword = await bcrypt.compare(password, user.password)
     if (!isValidPassword) {
       throw createError({
         statusCode: 401,
-        statusMessage: 'Invalid username or password'
+        statusMessage: '用户名或密码错误'
       })
     }
 
-    // 更新最后登录时间
-    userDb.updateLastLogin(user.id)
-
     // 生成JWT token
+    const config = useRuntimeConfig()
     const token = jwt.sign(
-      { 
-        userId: user.id,
-        username: user.username
-      },
-      JWT_SECRET,
-      { expiresIn: '24h' }
+      { userId: user.id, email: user.email },
+      config.jwtSecret,
+      { expiresIn: '7d' }
     )
+
+    // 更新最后在线时间
+    if (user.character) {
+      await prisma.character.update({
+        where: { id: user.character.id },
+        data: { lastOnline: new Date() }
+      })
+    }
 
     return {
       success: true,
-      message: 'Login successful',
       data: {
         token,
         user: {
           id: user.id,
-          username: user.username,
-          email: user.email
-        }
+          email: user.email,
+          username: user.username
+        },
+        character: user.character
       }
     }
-
-  } catch (error: any) {
-    console.error('登录错误:', error)
-    
-    if (error.statusCode) {
-      throw error
-    }
-    
+  } catch (error:any) {
     throw createError({
-      statusCode: 500,
-      statusMessage: 'Internal Server Error'
+      statusCode: error.statusCode || 500,
+      statusMessage: error.statusMessage || '登录失败'
     })
   }
 })

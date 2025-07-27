@@ -2,52 +2,83 @@
 @tailwind components;
 @tailwind utilities;
 
-/* 自定义样式 */
-.cat-card {
-  @apply bg-white rounded-lg shadow-md p-4 border border-gray-200;
+@layer base {
+  body {
+    @apply bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen;
+  }
 }
 
-.cat-button {
-  @apply px-4 py-2 rounded-lg font-medium transition-colors duration-200;
+@layer components {
+  .game-card {
+    @apply bg-white rounded-lg shadow-lg p-6 border border-gray-200 hover:shadow-xl transition-shadow duration-300;
+  }
+  
+  .skill-bar {
+    @apply w-full bg-gray-200 rounded-full h-3 overflow-hidden;
+  }
+  
+  .skill-progress {
+    @apply h-full bg-gradient-to-r from-blue-500 to-purple-600 transition-all duration-500 ease-out;
+  }
+  
+  .btn-primary {
+    @apply bg-gradient-to-r from-blue-500 to-purple-600 text-white px-6 py-3 rounded-lg font-semibold hover:from-blue-600 hover:to-purple-700 transition-all duration-200 shadow-md hover:shadow-lg;
+  }
+  
+  .btn-secondary {
+    @apply bg-gray-200 text-gray-800 px-6 py-3 rounded-lg font-semibold hover:bg-gray-300 transition-all duration-200;
+  }
+  
+  .resource-item {
+    @apply flex items-center p-3 bg-white rounded-lg border border-gray-200 hover:border-blue-300 cursor-pointer transition-all duration-200;
+  }
+  
+  .inventory-slot {
+    @apply w-16 h-16 bg-gray-100 border-2 border-gray-300 rounded-lg flex items-center justify-center hover:border-blue-400 transition-colors duration-200;
+  }
+  
+  .rarity-common {
+    @apply border-gray-400;
+  }
+  
+  .rarity-uncommon {
+    @apply border-green-400;
+  }
+  
+  .rarity-rare {
+    @apply border-blue-400;
+  }
+  
+  .rarity-epic {
+    @apply border-purple-400;
+  }
+  
+  .rarity-legendary {
+    @apply border-yellow-400;
+  }
 }
 
-.cat-button-primary {
-  @apply bg-blue-500 text-white hover:bg-blue-600;
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s ease;
 }
 
-.cat-button-secondary {
-  @apply bg-gray-200 text-gray-800 hover:bg-gray-300;
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 
-.cat-input {
-  @apply w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500;
+.slide-up-enter-active,
+.slide-up-leave-active {
+  transition: all 0.3s ease;
 }
 
-.cat-progress {
-  @apply w-full bg-gray-200 rounded-full h-2.5;
+.slide-up-enter-from {
+  transform: translateY(20px);
+  opacity: 0;
 }
 
-.cat-progress-bar {
-  @apply bg-blue-600 h-2.5 rounded-full transition-all duration-300;
-}
-
-/* 游戏特定样式 */
-.idle-task-card {
-  @apply bg-gradient-to-r from-purple-100 to-pink-100 border-purple-200;
-}
-
-.collection-item {
-  @apply flex items-center space-x-2 p-2 rounded hover:bg-gray-50;
-}
-
-.inventory-grid {
-  @apply grid grid-cols-6 gap-2;
-}
-
-.inventory-slot {
-  @apply w-12 h-12 border-2 border-gray-300 rounded flex items-center justify-center bg-gray-50;
-}
-
-.inventory-slot.filled {
-  @apply border-blue-400 bg-blue-50;
+.slide-up-leave-to {
+  transform: translateY(-20px);
+  opacity: 0;
 }

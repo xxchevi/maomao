@@ -1,39 +1,31 @@
 {
-  "name": "cat-idle-game",
+  "name": "maomao-idle-game",
   "private": true,
-  "type": "module",
   "scripts": {
     "build": "nuxt build",
     "dev": "nuxt dev",
     "generate": "nuxt generate",
     "preview": "nuxt preview",
-    "postinstall": "nuxt prepare"
+    "postinstall": "nuxt prepare && prisma generate"
   },
-  "dependencies": {
-    "@nuxt/ui": "^2.18.7",
-    "@nuxtjs/tailwindcss": "^6.12.1",
-    "@nuxtjs/web-vitals": "^0.2.7",
-    "@pinia/nuxt": "^0.5.5",
-    "@prisma/client": "^5.7.1",
-    "@vueuse/nuxt": "^11.1.0",
-    "bcryptjs": "^2.4.3",
-    "better-sqlite3": "^9.2.2",
-    "jsonwebtoken": "^9.0.2",
-    "nuxt": "^3.13.0",
-    "pinia": "^2.2.4",
-    "prisma": "^5.7.1",
-    "socket.io": "^4.7.5",
-    "socket.io-client": "^4.7.5",
-    "sqlite3": "^5.1.6",
-    "uuid": "^10.0.0",
-    "vue": "latest",
-    "zod": "^3.22.4"
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
   },
   "devDependencies": {
-    "@nuxt/devtools": "^1.5.2",
-    "autoprefixer": "^10.4.21",
-    "postcss": "^8.5.6",
-    "tailwindcss": "^3.4.17",
-    "typescript": "^5.6.3"
+    "@nuxt/devtools": "latest",
+    "nuxt": "^3.8.0",
+    "prisma": "^5.6.0"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.6.0",
+    "@nuxtjs/tailwindcss": "^6.8.4",
+    "@pinia/nuxt": "^0.5.1",
+    "@sidebase/nuxt-auth": "^0.6.2",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2",
+    "pinia": "^2.1.7",
+    "socket.io": "^4.7.4",
+    "socket.io-client": "^4.7.4",
+    "node-cron": "^3.0.3"
   }
 }

@@ -1,577 +1,328 @@
 import { defineStore } from 'pinia'
 import { io, Socket } from 'socket.io-client'
 
-interface IdleTask {
-  id: string
-  name: string
-  type: 'collect' | 'craft' | 'explore'
-  duration: number // 秒
-  progress: number // 0-100
-  rewards: Array<{ item: string; quantity: number; chance: number }>
-  isActive: boolean
-  startTime?: number
-  endTime?: number
-}
-
 interface InventoryItem {
   id: string
-  name: string
-  icon: string
+  itemId: string
   quantity: number
-  rarity: 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary'
-}
-
-interface Skill {
-  level: number
-  experience: number
-  nextLevelExp: number
-  progress?: number
-}
-
-interface QueueTask {
-  id: number
-  taskType: string
-  taskName: string
-  duration: number
-  remainingCount: number
-  totalCount: number
-  status: 'pending' | 'running' | 'completed'
-  progress: number
-  rewards: Array<{ item: string; quantity: number; chance: number }>
-  experience: number
-  skillType: string
-  queuePosition: number
-  startTime?: string
-  estimatedEndTime?: number
-  remainingTime?: number
-}
-
-interface QueueStatus {
-  queue: QueueTask[]
-  currentTask: QueueTask | null
-  queueLength: number
-  totalEstimatedTime: number
-}
-
-interface GameState {
-  socket: Socket | null
-  connected: boolean
-  currentTask: IdleTask | null
-  taskQueue: IdleTask[]
-  queueStatus: QueueStatus
-  inventory: InventoryItem[]
-  experience: number
-  level: number
-  skills: {
-    farming: Skill
-    mining: Skill
-    agriculture: Skill
-    fishing: Skill
+  item: {
+    id: string
+    name: string
+    type: string
+    rarity: string
+    value: number
   }
 }
 
+interface GameResource {
+  id: string
+  name: string
+  type: string
+  area: string
+  itemId: string
+  baseTime: number
+  expReward: number
+  levelReq: number
+  rarity: string
+  dropRate: number
+}
+
+interface ActivityQueue {
+  id: string
+  activityType: string
+  resourceId: string
+  resourceName: string
+  totalRepeat: number
+  currentRepeat: number
+  progress: number
+  remainingTime: number
+  estimatedTime: number
+  createdAt: number
+}
+
+
+
 export const useGameStore = defineStore('game', {
-  state: (): GameState => ({
-    socket: null,
-    connected: false,
-    currentTask: null,
-    taskQueue: [],
-    queueStatus: {
-      queue: [],
-      currentTask: null,
-      queueLength: 0,
-      totalEstimatedTime: 0
-    },
-    inventory: [],
-    experience: 0,
-    level: 1,
-    skills: {
-      farming: {
-        level: 1,
-        experience: 0,
-        nextLevelExp: 100,
-        progress: 0
-      },
-      mining: {
-        level: 1,
-        experience: 0,
-        nextLevelExp: 100,
-        progress: 0
-      },
-      agriculture: {
-        level: 1,
-        experience: 0,
-        nextLevelExp: 100,
-        progress: 0
-      },
-      fishing: {
-        level: 1,
-        experience: 0,
-        nextLevelExp: 100,
-        progress: 0
-      }
-    }
+  state: () => ({
+    socket: null as Socket | null,
+    isConnected: false,
+    inventory: [] as InventoryItem[],
+    resources: [] as GameResource[],
+
+    // 队列系统
+    currentQueue: null as ActivityQueue | null,
+    pendingQueues: [] as ActivityQueue[],
+    
+    // 保留兼容性
+    currentActivity: null as string | null,
+    activityProgress: 0,
+    activityTarget: null as GameResource | null,
+    notifications: [] as Array<{ id: string; message: string; type: string; timestamp: number }>
   }),
 
   getters: {
-    isTaskActive: (state) => state.currentTask?.isActive || false,
-    taskProgress: (state) => state.currentTask?.progress || 0,
-    inventoryCount: (state) => state.inventory.reduce((sum, item) => sum + item.quantity, 0),
-    canStartTask: (state) => !state.currentTask?.isActive,
-    hasQueuedTasks: (state) => state.queueStatus.queueLength > 0,
-    canAddToQueue: (state) => state.queueStatus.queueLength < 20,
-    currentQueueTask: (state) => state.queueStatus.currentTask,
-    queuedTasks: (state) => state.queueStatus.queue.filter(task => task.status === 'pending'),
-    totalQueueTime: (state) => state.queueStatus.totalEstimatedTime
+    inventoryByType: (state) => (type:any) => {
+      return state.inventory.filter(item => item.item.type === type)
+    },
+    
+    resourcesByArea: (state) => (area:any) => {
+      return state.resources.filter(resource => resource.area === area)
+    },
+    
+
   },
 
   actions: {
     initSocket() {
-      const config = useRuntimeConfig()
-      const authStore = useAuthStore()
-      
-      if (!authStore.token) return
-      
-      this.socket = io(config.public.socketUrl, {
-        auth: {
-          token: authStore.token
-        },
-        transports: ['websocket', 'polling']
-      })
-      
-      this.socket.on('connect', () => {
-        this.connected = true
-        console.log('Socket连接成功')
-      })
-      
-      this.socket.on('disconnect', () => {
-        this.connected = false
-        console.log('Socket连接断开')
-      })
-      
-      // 用户认证
-      this.socket.emit('authenticate', {
-        token: authStore.token
-      })
-      
-      // 监听认证结果
-      this.socket.on('authenticated', (data) => {
-        console.log('Socket认证成功:', data)
-      })
-      
-      this.socket.on('auth_error', (data) => {
-        console.error('Socket认证失败:', data)
-      })
-      
-      // 监听游戏状态更新
-      this.socket.on('game_state', (data) => {
-        this.updateGameState(data)
-      })
-      
-      // 监听任务进度更新
-      this.socket.on('task_progress', (data) => {
-        if (this.currentTask) {
-          this.currentTask.progress = data.progress
-        }
-      })
-      
-      // 监听任务开始
-      this.socket.on('task_started', (data) => {
-        if (data.success) {
-          this.currentTask = data.task
-        }
-      })
-      
-      // 监听任务完成
-      this.socket.on('task_completed', (data) => {
-        this.handleTaskComplete(data)
-      })
-      
-      // 监听任务错误
-      this.socket.on('task_error', (data) => {
-        console.error('任务错误:', data.message)
-      })
-      
-      // 监听队列状态更新
-      this.socket.on('queue_status', (data) => {
-        this.updateQueueStatus(data)
-      })
-      
-      // 监听队列任务开始
-      this.socket.on('queue_task_started', (data) => {
-        console.log('队列任务开始:', data)
-        this.updateQueueStatus(data.queueStatus)
-      })
-      
-      // 监听队列任务完成
-      this.socket.on('queue_task_completed', (data) => {
-        console.log('队列任务完成:', data)
-        this.updateQueueStatus(data.queueStatus)
-        // 更新游戏状态
-        if (data.gameState) {
-          this.updateGameState(data.gameState)
-        }
-      })
-      
-      // 监听队列任务进度
-      this.socket.on('queue_task_progress', (data) => {
-        if (this.queueStatus.currentTask && this.queueStatus.currentTask.id === data.taskId) {
-          this.queueStatus.currentTask.progress = data.progress
-          this.queueStatus.currentTask.remainingTime = data.remainingTime
-        }
-      })
-      
-      // 监听一般错误
-      this.socket.on('error', (data) => {
-        console.error('Socket错误:', data.message)
-      })
+      if (process.client && !this.socket) {
+        this.socket = io('http://localhost:3000', {
+          auth: {
+            token: localStorage.getItem('auth-token')
+          }
+        })
+
+        this.socket.on('connect', () => {
+          this.isConnected = true
+          console.log('Socket connected')
+        })
+
+        this.socket.on('disconnect', () => {
+          this.isConnected = false
+          console.log('Socket disconnected')
+        })
+
+        // 监听游戏事件
+        this.socket.on('character_updated', (character) => {
+          const authStore = useAuthStore()
+          authStore.updateCharacter(character)
+        })
+
+        this.socket.on('inventory_updated', (inventory) => {
+          this.inventory = inventory
+        })
+
+        // 队列相关事件
+        this.socket.on('queue_progress', (data) => {
+          if (this.currentQueue) {
+            this.currentQueue.progress = data.progress
+            this.currentQueue.remainingTime = data.remainingTime
+            this.currentQueue.currentRepeat = data.currentRepeat || 1
+            
+            // 兼容旧的进度系统
+            this.activityProgress = data.progress
+          }
+        })
+
+        this.socket.on('queue_completed', (data) => {
+          this.currentQueue = null
+          this.currentActivity = null
+          this.activityProgress = 0
+          this.activityTarget = null
+          this.addNotification(data.message, 'success')
+          
+          // 自动开始下一个队列
+          this.startNextQueue()
+        })
+
+        this.socket.on('queue_updated', (queues) => {
+          this.pendingQueues = queues
+        })
+
+        // 物品掉落通知
+        this.socket.on('item_dropped', (data) => {
+          this.addNotification(data.message, 'success')
+        })
+      }
     },
-    
+
     disconnectSocket() {
       if (this.socket) {
         this.socket.disconnect()
         this.socket = null
-        this.connected = false
+        this.isConnected = false
       }
     },
-    
-    async loadGameState() {
+
+    async loadGameData() {
       try {
         const authStore = useAuthStore()
-        
-        const response = await $fetch('/api/game/state', {
+        if (!authStore.token) return
+
+        // 加载仓库
+        const inventoryData = await $fetch('/api/game/inventory', {
           headers: {
             Authorization: `Bearer ${authStore.token}`
           }
         })
-        
-        if (response.success) {
-          this.updateGameState(response.data)
-        }
-      } catch (error) {
-        console.error('加载游戏状态失败:', error)
-      }
-    },
-    
-    updateGameState(data: any) {
-      if (data.currentTask) {
-        this.currentTask = data.currentTask
-      }
-      if (data.inventory) {
-        this.inventory = data.inventory
-      }
-      if (data.experience !== undefined) {
-        this.experience = data.experience
-      }
-      if (data.level !== undefined) {
-        this.level = data.level
-      }
-      if (data.skills) {
-        // 更新技能数据
-        if (data.skills.farming) {
-          this.skills.farming = {
-            ...this.skills.farming,
-            ...data.skills.farming,
-            // 计算进度百分比
-            progress: Math.min(Math.floor((data.skills.farming.experience / data.skills.farming.nextLevelExp) * 100), 100)
-          }
-        }
-        if (data.skills.mining) {
-          this.skills.mining = {
-            ...this.skills.mining,
-            ...data.skills.mining,
-            // 计算进度百分比
-            progress: Math.min(Math.floor((data.skills.mining.experience / data.skills.mining.nextLevelExp) * 100), 100)
-          }
-        }
-        if (data.skills.agriculture) {
-          this.skills.agriculture = {
-            ...this.skills.agriculture,
-            ...data.skills.agriculture,
-            // 计算进度百分比
-            progress: Math.min(Math.floor((data.skills.agriculture.experience / data.skills.agriculture.nextLevelExp) * 100), 100)
-          }
-        }
-        if (data.skills.fishing) {
-          this.skills.fishing = {
-            ...this.skills.fishing,
-            ...data.skills.fishing,
-            // 计算进度百分比
-            progress: Math.min(Math.floor((data.skills.fishing.experience / data.skills.fishing.nextLevelExp) * 100), 100)
-          }
-        }
-      }
-    },
-    
-    async startCollectTask(taskType: string, duration: number = 60) {
-      if (!this.canStartTask) return
-      
-      try {
-        const authStore = useAuthStore()
-        
-        const response = await $fetch('/api/game/collect/start', {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${authStore.token}`
-          },
-          body: {
-            taskType: taskType,
-            duration: duration
-          }
-        })
-        
-        if (response.success) {
-          this.currentTask = response.data.task
-          
-          // 通过Socket通知服务器
-          if (this.socket) {
-            this.socket.emit('start_collect_task', {
-              taskType: taskType,
-              duration: duration
-            })
-          }
-        }
-        
-        return response
-      } catch (error) {
-        console.error('开始采集任务失败:', error)
-        return { success: false, message: '开始采集任务失败' }
-      }
-    },
-    
-    async stopCollectTask() {
-      if (!this.currentTask) return
-      
-      try {
-        const authStore = useAuthStore()
-        
-        const response = await $fetch('/api/game/collect/stop', {
-          method: 'POST',
+        this.inventory = inventoryData.data
+
+        // 加载资源点
+        const resourcesData = await $fetch('/api/game/resources')
+        this.resources = resourcesData.data
+
+        // 加载队列数据
+        const queueData = await $fetch('/api/game/queues', {
           headers: {
             Authorization: `Bearer ${authStore.token}`
           }
         })
-        
-        if (response.success) {
-          // 添加奖励到仓库
-          if (response.data?.rewards?.items && response.data.rewards.items.length > 0) {
-            this.addToInventory(response.data.rewards.items)
-          }
-          
-          // 更新经验值
-          if (response.data?.rewards?.experience) {
-            this.experience = response.data.gameState.experience
-          }
-          
-          // 检查升级
-          if (response.data?.rewards?.levelUp) {
-            this.level = response.data.gameState.level
-          }
-          
-          // 更新技能数据
-          if (response.data?.gameState?.skills) {
-            const skills = response.data.gameState.skills
-            
-            if (skills.farming) {
-              this.skills.farming = {
-                ...this.skills.farming,
-                ...skills.farming,
-                // 计算进度百分比
-                progress: Math.min(Math.floor((skills.farming.experience / skills.farming.nextLevelExp) * 100), 100)
-              }
-            }
-            
-            if (skills.mining) {
-              this.skills.mining = {
-                ...this.skills.mining,
-                ...skills.mining,
-                // 计算进度百分比
-                progress: Math.min(Math.floor((skills.mining.experience / skills.mining.nextLevelExp) * 100), 100)
-              }
-            }
-          }
-          
-          this.currentTask = null
-          
-          // 通过Socket通知服务器
-          if (this.socket) {
-            this.socket.emit('stop_collect_task')
-          }
-        }
-        
-        return response
+        this.currentQueue = queueData.data.current
+        this.pendingQueues = queueData.data.pending
+
       } catch (error) {
-        console.error('停止采集任务失败:', error)
-        return { success: false, message: '停止采集任务失败' }
+        console.error('Failed to load game data:', error)
       }
     },
-    
-    handleTaskComplete(data: any) {
-      if (data.rewards && data.rewards.length > 0) {
-        this.addToInventory(data.rewards)
+
+    // 队列管理方法
+    async addToQueue(params: { activityType: string; resourceId: string; repeatCount: number }) {
+      const resource = this.resources.find(r => r.id === params.resourceId)
+      if (!resource) {
+        this.addNotification('资源点不存在', 'error')
+        return
       }
-      if (data.experience) {
-        this.experience = data.experience
+
+      // 如果没有当前队列，直接立即执行
+      if (!this.currentQueue) {
+        await this.startImmediately(params)
+        return
       }
-      if (data.level) {
-        this.level = data.level
+
+      if (this.pendingQueues.length >= 20) {
+        this.addNotification('待开始队列已满(最多20个)', 'warning')
+        return
       }
-      // 更新技能数据
-      if (data.skills) {
-        if (data.skills.farming) {
-          this.skills.farming = {
-            ...this.skills.farming,
-            ...data.skills.farming,
-            // 计算进度百分比
-            progress: Math.min(Math.floor((data.skills.farming.experience / data.skills.farming.nextLevelExp) * 100), 100)
-          }
-        }
-        if (data.skills.mining) {
-          this.skills.mining = {
-            ...this.skills.mining,
-            ...data.skills.mining,
-            // 计算进度百分比
-            progress: Math.min(Math.floor((data.skills.mining.experience / data.skills.mining.nextLevelExp) * 100), 100)
-          }
-        }
+
+      const queue: ActivityQueue = {
+        id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+        activityType: params.activityType,
+        resourceId: params.resourceId,
+        resourceName: resource.name,
+        totalRepeat: params.repeatCount,
+        currentRepeat: 1,
+        progress: 0,
+        remainingTime: 0,
+        estimatedTime: resource.baseTime * params.repeatCount,
+        createdAt: Date.now()
       }
-      this.currentTask = null
-    },
-    
-    addToInventory(items: Array<{ id: string; name: string; icon: string; quantity: number; rarity: string }>) {
-      items.forEach(newItem => {
-        const existingItem = this.inventory.find(item => item.id === newItem.id)
-        if (existingItem) {
-          existingItem.quantity += newItem.quantity
-        } else {
-          this.inventory.push({
-            id: newItem.id,
-            name: newItem.name,
-            icon: newItem.icon,
-            quantity: newItem.quantity,
-            rarity: newItem.rarity as any
-          })
-        }
-      })
-    },
-    
-    async quickAction(type: 'speed10' | 'speed100' | 'speed1000' | 'time30min' | 'time1hour') {
-      if (!this.currentTask?.isActive) return
-      
-      try {
-        const authStore = useAuthStore()
-        const { $fetch } = useNuxtApp()
-        
-        const response = await $fetch('/api/game/task/quick-action', {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${authStore.token}`
-          },
-          body: {
-            taskId: this.currentTask.id,
-            actionType: type
-          }
-        })
-        
-        return response
-      } catch (error) {
-        console.error('快速操作失败:', error)
-        return { success: false, message: '快速操作失败' }
-      }
-    },
-    
-    // 队列相关方法
-    updateQueueStatus(data: QueueStatus) {
-      this.queueStatus = data
-    },
-    
-    addTaskToQueue(taskType: string, count: number = 1) {
-      return new Promise((resolve) => {
-        if (!this.socket) {
-          resolve({ success: false, message: 'WebSocket未连接' })
-          return
-        }
-        
-        // 监听添加任务结果
-        const handleTaskAdded = (response: any) => {
-          this.socket?.off('task_added', handleTaskAdded)
-          this.socket?.off('task_add_error', handleTaskError)
-          resolve(response)
-        }
-        
-        const handleTaskError = (error: any) => {
-          this.socket?.off('task_added', handleTaskAdded)
-          this.socket?.off('task_add_error', handleTaskError)
-          resolve({ success: false, message: error.message || '添加任务失败' })
-        }
-        
-        this.socket.on('task_added', handleTaskAdded)
-        this.socket.on('task_add_error', handleTaskError)
-        
-        // 发送添加任务事件
-        this.socket.emit('add_task_to_queue', {
-          taskType,
-          count
-        })
-      })
-    },
-    
-    removeTaskFromQueue(taskId: number) {
-      return new Promise((resolve) => {
-        if (!this.socket) {
-          resolve({ success: false, message: 'WebSocket未连接' })
-          return
-        }
-        
-        // 监听移除任务结果
-        const handleTaskRemoved = (response: any) => {
-          this.socket?.off('task_removed', handleTaskRemoved)
-          this.socket?.off('task_remove_error', handleTaskError)
-          resolve(response)
-        }
-        
-        const handleTaskError = (error: any) => {
-          this.socket?.off('task_removed', handleTaskRemoved)
-          this.socket?.off('task_remove_error', handleTaskError)
-          resolve({ success: false, message: error.message || '移除任务失败' })
-        }
-        
-        this.socket.on('task_removed', handleTaskRemoved)
-        this.socket.on('task_remove_error', handleTaskError)
-        
-        // 发送移除任务事件
-        this.socket.emit('remove_task_from_queue', { taskId })
-      })
-    },
-    
-    getQueueStatus() {
-      return new Promise((resolve) => {
-        if (!this.socket) {
-          resolve({ success: false, message: 'WebSocket未连接' })
-          return
-        }
-        
-        // 发送获取队列状态事件
-        this.socket.emit('get_queue_status')
-        resolve({ success: true })
-      })
-    },
-    
-    startQueueProcessing() {
+
       if (this.socket) {
-        this.socket.emit('start_queue_processing')
+        this.socket.emit('add_to_queue', queue)
+      }
+      
+      this.addNotification(`已添加到队列: ${resource.name} x${params.repeatCount}`, 'success')
+    },
+
+    async startImmediately(params: { activityType: string; resourceId: string; repeatCount: number }) {
+      const resource = this.resources.find(r => r.id === params.resourceId)
+      if (!resource) {
+        this.addNotification('资源点不存在', 'error')
+        return
+      }
+
+      const queue: ActivityQueue = {
+        id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+        activityType: params.activityType,
+        resourceId: params.resourceId,
+        resourceName: resource.name,
+        totalRepeat: params.repeatCount,
+        currentRepeat: 1,
+        progress: 0,
+        remainingTime: resource.baseTime,
+        estimatedTime: resource.baseTime * params.repeatCount,
+        createdAt: Date.now()
+      }
+
+      // 如果有当前队列，将其移到待开始队列的第一位
+      if (this.currentQueue) {
+        this.pendingQueues.unshift(this.currentQueue)
+      }
+
+      this.currentQueue = queue
+      this.currentActivity = params.activityType
+      this.activityTarget = resource
+      this.activityProgress = 0
+
+      if (this.socket) {
+        this.socket.emit('start_immediately', queue)
+      }
+      
+      this.addNotification(`立即开始: ${resource.name} x${params.repeatCount}`, 'success')
+    },
+
+    async stopCurrentQueue() {
+      if (!this.currentQueue) return
+
+      this.currentQueue = null
+      this.currentActivity = null
+      this.activityProgress = 0
+      this.activityTarget = null
+
+      if (this.socket) {
+        this.socket.emit('stop_current_queue')
+      }
+      
+      this.addNotification('已停止当前队列', 'info')
+      
+      // 自动开始下一个队列
+      this.startNextQueue()
+    },
+
+    async removeFromQueue(queueId: string) {
+      const index = this.pendingQueues.findIndex(q => q.id === queueId)
+      if (index !== -1) {
+        const queue = this.pendingQueues[index]
+        this.pendingQueues.splice(index, 1)
+        
+        if (this.socket) {
+          this.socket.emit('remove_from_queue', queueId)
+        }
+        
+        this.addNotification(`已移除队列: ${queue.resourceName}`, 'info')
       }
     },
-    
-    stopQueueProcessing() {
-      if (this.socket) {
-        this.socket.emit('stop_queue_processing')
-      }
+
+    startNextQueue() {
+      // 这个方法不需要手动调用，服务器端会自动处理队列切换
+      // 保留这个方法是为了兼容性，但实际逻辑由服务器端处理
     },
-    
-    requestQueueStatus() {
-      if (this.socket) {
-        this.socket.emit('get_queue_status')
+
+    // 兼容旧的方法
+    async startActivity(type: any, resourceId: any) {
+      // 重定向到新的立即开始方法
+      await this.startImmediately({
+        activityType: type,
+        resourceId,
+        repeatCount: 1
+      })
+    },
+
+    async stopActivity() {
+      await this.stopCurrentQueue()
+    },
+
+
+
+    addNotification(message:string, type = 'info') {
+      const notification = {
+        id: Date.now().toString(),
+        message,
+        type,
+        timestamp: Date.now()
+      }
+      
+      this.notifications.unshift(notification)
+      
+      // 自动移除通知
+      setTimeout(() => {
+        this.removeNotification(notification.id)
+      }, 5000)
+    },
+
+    removeNotification(id:string) {
+      const index = this.notifications.findIndex(n => n.id === id)
+      if (index !== -1) {
+        this.notifications.splice(index, 1)
       }
     }
   }

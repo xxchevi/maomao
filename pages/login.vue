@@ -1,18 +1,23 @@
 <template>
-  <div class="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-purple-50">
-    <div class="max-w-md w-full space-y-8 p-8">
-      <!-- Logo和标题 -->
-      <div class="text-center">
-        <div class="text-6xl mb-4">🐱</div>
-        <h2 class="text-3xl font-bold text-gray-900 mb-2">猫猫挂机游戏</h2>
-        <p class="text-gray-600">欢迎回来，开始你的挂机之旅</p>
+  <div class="min-h-screen flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+    <div class="max-w-md w-full space-y-8">
+      <div>
+        <div class="text-center text-4xl mb-4">🐱</div>
+        <h2 class="mt-6 text-center text-3xl font-extrabold text-gray-900">
+          登录账号
+        </h2>
+        <p class="mt-2 text-center text-sm text-gray-600">
+          还没有账号？
+          <NuxtLink to="/register" class="font-medium text-blue-600 hover:text-blue-500">
+            立即注册
+          </NuxtLink>
+        </p>
       </div>
-
-      <!-- 登录表单 -->
-      <div class="cat-card">
-        <form @submit.prevent="handleLogin" class="space-y-6">
+      
+      <form class="mt-8 space-y-6" @submit.prevent="handleLogin">
+        <div class="space-y-4">
           <div>
-            <label for="username" class="block text-sm font-medium text-gray-700 mb-2">
+            <label for="username" class="block text-sm font-medium text-gray-700">
               用户名
             </label>
             <input
@@ -20,13 +25,13 @@
               v-model="form.username"
               type="text"
               required
-              class="cat-input"
-              placeholder="请输入用户名 (testuser)"
+              class="mt-1 appearance-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+              placeholder="请输入用户名"
             />
           </div>
-
+          
           <div>
-            <label for="password" class="block text-sm font-medium text-gray-700 mb-2">
+            <label for="password" class="block text-sm font-medium text-gray-700">
               密码
             </label>
             <input
@@ -34,117 +39,86 @@
               v-model="form.password"
               type="password"
               required
-              class="cat-input"
-              placeholder="请输入密码 (password123)"
+              class="mt-1 appearance-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+              placeholder="请输入密码"
             />
           </div>
+        </div>
 
-          <div class="flex items-center justify-between">
-            <div class="flex items-center">
-              <input
-                id="remember"
-                v-model="form.remember"
-                type="checkbox"
-                class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-              />
-              <label for="remember" class="ml-2 block text-sm text-gray-700">
-                记住我
-              </label>
-            </div>
-            <a href="#" class="text-sm text-blue-600 hover:text-blue-500">
-              忘记密码？
-            </a>
-          </div>
+        <div v-if="error" class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
+          {{ error }}
+        </div>
 
+        <div>
           <button
             type="submit"
-            :disabled="authStore.loading"
-            class="w-full cat-button cat-button-primary disabled:opacity-50 disabled:cursor-not-allowed"
+            :disabled="loading"
+            class="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <span v-if="authStore.loading">登录中...</span>
-            <span v-else>登录</span>
+            <span v-if="loading" class="mr-2">
+              <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+            </span>
+            {{ loading ? '登录中...' : '登录' }}
           </button>
-        </form>
-
-        <div class="mt-6 text-center">
-          <p class="text-sm text-gray-600">
-            还没有账号？
-            <NuxtLink to="/register" class="text-blue-600 hover:text-blue-500 font-medium">
-              立即注册
-            </NuxtLink>
-          </p>
         </div>
-      </div>
-
-      <!-- 错误提示 -->
-      <div v-if="error" class="bg-red-50 border border-red-200 rounded-lg p-4">
-        <div class="flex">
-          <div class="text-red-400">⚠️</div>
-          <div class="ml-3">
-            <p class="text-sm text-red-700">{{ error }}</p>
-          </div>
-        </div>
-      </div>
+      </form>
     </div>
   </div>
 </template>
 
 <script setup>
-// 页面元数据
-definePageMeta({
-  layout: false,
-  auth: false
-})
-
-// 状态管理
 const authStore = useAuthStore()
-const router = useRouter()
+const gameStore = useGameStore()
 
-// 响应式数据
+// 如果已登录，重定向到游戏页面
+if (authStore.isLoggedIn) {
+  await navigateTo('/game')
+}
+
 const form = reactive({
   username: '',
-  password: '',
-  remember: false
+  password: ''
 })
 
+const loading = ref(false)
 const error = ref('')
 
-// 如果已登录，重定向到首页
-watchEffect(() => {
-  if (authStore.isLoggedIn) {
-    navigateTo('/')
-  }
-})
-
-// 登录处理
 const handleLogin = async () => {
+  if (loading.value) return
+  
+  loading.value = true
   error.value = ''
   
-  if (!form.username || !form.password) {
-    error.value = '请填写完整的登录信息'
-    return
-  }
-  
-  const result = await authStore.login({
-    username: form.username,
-    password: form.password
-  })
-  
-  if (result.success) {
-    // 登录成功，初始化游戏状态
-    const gameStore = useGameStore()
-    gameStore.initSocket()
-    await gameStore.loadGameState()
+  try {
+    const result = await authStore.login(form.username, form.password)
     
-    // 跳转到首页
-    await navigateTo('/')
-  } else {
-    error.value = result.data?.message || result.message || '登录失败，请检查用户名和密码'
+    if (result.success) {
+      // 初始化Socket连接和游戏数据
+      gameStore.initSocket()
+      await gameStore.loadGameData()
+      
+      // 重定向到游戏页面
+      await navigateTo('/game')
+    } else {
+      error.value = result.error || '登录失败'
+    }
+  } catch (err) {
+    error.value = err.message || '登录失败，请稍后重试'
+  } finally {
+    loading.value = false
   }
 }
 
-// 页面标题
+// 设置页面元数据
 useHead({
   title: '登录 - 猫猫挂机游戏'
+})
+
+// 页面布局
+definePageMeta({
+  layout: false
 })
 </script>

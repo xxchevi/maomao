@@ -27,36 +27,33 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    // 查找用户
-    const user = await prisma.user.findUnique({
-      where: { id: decoded.userId },
+    // 查找用户角色
+    const character = await prisma.character.findUnique({
+      where: { userId: decoded.userId },
       include: {
-        character: true
+        inventory: {
+          include: {
+            item: true
+          }
+        }
       }
     })
 
-    if (!user) {
+    if (!character) {
       throw createError({
-        statusCode: 401,
-        statusMessage: '用户不存在'
+        statusCode: 404,
+        statusMessage: '角色不存在'
       })
     }
 
     return {
       success: true,
-      data: {
-        user: {
-          id: user.id,
-          email: user.email,
-          username: user.username
-        },
-        character: user.character
-      }
+      data: character.inventory
     }
   } catch (error:any) {
     throw createError({
       statusCode: error.statusCode || 500,
-      statusMessage: error.statusMessage || '验证失败'
+      statusMessage: error.statusMessage || '获取仓库失败'
     })
   }
 })

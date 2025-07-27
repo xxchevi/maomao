@@ -1,698 +1,724 @@
-import { Server } from 'socket.io'
+import { Server, Socket } from 'socket.io'
 import jwt from 'jsonwebtoken'
-import { userDb, gameDataDb, taskQueueDb } from '~/server/database/db'
-import { queueProcessor } from '~/server/utils/queueProcessor'
+import { PrismaClient } from '@prisma/client'
 
-// 模拟数据库存储（与其他文件共享）
-const users: any[] = []
+const prisma = new PrismaClient()
+let io: Server
 
-export default defineNitroPlugin((nitroApp) => {
-  const io = new Server(nitroApp.hooks.hookOnce('render:route', () => {}).server, {
-    cors: {
-      origin: process.env.NODE_ENV === 'development' ? 'http://localhost:3000' : false,
-      methods: ['GET', 'POST']
-    },
-    transports: ['websocket', 'polling']
-  })
-
-  // 存储用户连接
-  const userConnections = new Map()
-
-  io.on('connection', (socket) => {
-    console.log('用户连接:', socket.id)
-
-    // 用户认证
-    socket.on('authenticate', async (data) => {
-      try {
-        const { token } = data
-        const config = useRuntimeConfig()
-        
-        // 验证JWT token
-        const decoded = jwt.verify(token, config.jwtSecret) as any
-        
-        // 查找用户
-        const user = users.find(u => u.id === decoded.userId)
-        if (!user) {
-          socket.emit('auth_error', { message: '用户不存在' })
-          return
-        }
-        
-        // 保存用户连接
-        socket.userId = user.id
-        userConnections.set(user.id, socket)
-        
-        // 更新用户在线状态
-        user.isOnline = true
-        user.lastActiveAt = new Date().toISOString()
-        
-        socket.emit('authenticated', {
-          success: true,
-          user: {
-            id: user.id,
-            uuid: user.uuid,
-            name: user.name,
-            email: user.email
-          }
-        })
-        
-        // 发送游戏状态（包括队列状态）
-        sendGameStateWithQueue(socket, user)
-        
-        // 启动队列处理器
-        queueProcessor.startProcessing(user.id, (event, data) => {
-          socket.emit(event, data)
-        })
-        
-        console.log(`用户 ${user.name} 已认证`)
-      } catch (error) {
-        socket.emit('auth_error', { message: '认证失败' })
-      }
-    })
-
-    // 获取游戏状态
-    socket.on('get_game_state', () => {
-      if (!socket.userId) {
-        socket.emit('error', { message: '未认证' })
-        return
-      }
-      
-      const user = users.find(u => u.id === socket.userId)
-      if (user) {
-        sendGameState(socket, user)
-      }
-    })
-
-    // 开始采集任务
-    socket.on('start_collect_task', async (data) => {
-      if (!socket.userId) {
-        socket.emit('error', { message: '未认证' })
-        return
-      }
-      
-      const user = users.find(u => u.id === socket.userId)
-      if (!user) {
-        socket.emit('error', { message: '用户不存在' })
-        return
-      }
-      
-      try {
-        const { taskType, duration } = data
-        
-        // 创建新任务
-        const now = Date.now()
-        const durationMs = duration * 60 * 1000
-        
-        const task = {
-          id: `task_${now}`,
-          type: taskType,
-          duration: duration,
-          startTime: now,
-          endTime: now + durationMs,
-          progress: 0,
-          rewards: getTaskRewards(taskType),
-          experience: Math.floor(duration / 5) + 5
-        }
-        
-        user.gameData.currentTask = task
-        
-        socket.emit('task_started', {
-          success: true,
-          task: task,
-        })
-        
-        // 开始任务进度更新
-        startTaskProgress(user, socket)
-        
-      } catch (error) {
-        socket.emit('task_error', { message: '开始任务失败' })
-      }
-    })
-
-    // 停止采集任务
-    socket.on('stop_collect_task', () => {
-      if (!socket.userId) {
-        socket.emit('error', { message: '未认证' })
-        return
-      }
-      
-      const user = users.find(u => u.id === socket.userId)
-      if (!user || !user.gameData.currentTask) {
-        socket.emit('task_error', { message: '当前没有进行中的任务' })
-        return
-      }
-      
-      const rewards = completeTask(user)
-      
-      socket.emit('task_completed', {
-        success: true,
-        rewards: rewards,
-        experience: user.gameData.experience,
-        level: user.gameData.level
-      })
-      
-      sendGameState(socket, user)
-    })
-
-    // 监听断开连接
-      socket.on('disconnect', () => {
-        console.log('用户断开连接:', socket.id)
-        // 停止队列处理器（但保持任务在服务器端继续执行）
-        if (socket.data.userId) {
-          // 注意：这里不停止队列处理，因为任务应该在离线时继续执行
-          console.log(`用户 ${socket.data.userId} 断开连接，队列继续在后台执行`)
-        }
-      })
-      
-      // 监听队列相关事件
-      socket.on('get_queue_status', () => {
-        if (socket.userId) {
-          sendQueueStatus(socket, socket.userId)
-        }
-      })
-      
-      socket.on('add_task_to_queue', async (data) => {
-        if (!socket.userId) {
-          socket.emit('task_add_error', { message: '未认证' })
-          return
-        }
-        
-        try {
-          const { taskType, count = 1 } = data
-          
-          // 获取用户数据
-          const user = users.find(u => u.id === socket.userId)
-          if (!user) {
-            socket.emit('task_add_error', { message: '用户不存在' })
-            return
-          }
-          
-          // 检查队列长度限制
-          const currentQueueLength = taskQueueDb.getQueueLength(socket.userId)
-          if (currentQueueLength >= 20) {
-            socket.emit('task_add_error', { message: '队列已满，最多只能有20个任务' })
-            return
-          }
-          
-          // 注意：已移除能量检查，任务执行不再受能量限制
-          
-          // 添加任务到队列
-          const taskData = {
-            userId: socket.userId,
-            taskType,
-            taskName: getTaskName(taskType),
-            duration: getTaskDuration(taskType),
-            totalCount: count,
-            remainingCount: count,
-            rewards: JSON.stringify(getTaskRewards(taskType)),
-            experience: getTaskExperience(taskType),
-            skillType: getTaskSkillType(taskType),
-          }
-          
-          const taskId = taskQueueDb.addTaskForSocket(taskData)
-          
-          socket.emit('task_added', {
-            success: true,
-            taskId,
-            message: '任务已添加到队列'
-          })
-          
-          // 发送更新的队列状态
-          sendQueueStatus(socket, socket.userId)
-          
-        } catch (error) {
-          console.error('添加任务到队列失败:', error)
-          socket.emit('task_add_error', { message: '添加任务失败' })
-        }
-      })
-      
-      socket.on('remove_task_from_queue', async (data) => {
-        if (!socket.userId) {
-          socket.emit('task_remove_error', { message: '未认证' })
-          return
-        }
-        
-        try {
-          const { taskId } = data
-          
-          // 检查任务是否存在且属于当前用户
-          const task = taskQueueDb.getTaskById(taskId)
-          if (!task || task.userId !== socket.userId) {
-            socket.emit('task_remove_error', { message: '任务不存在或无权限' })
-            return
-          }
-          
-          // 检查任务状态
-          if (task.status === 'running') {
-            socket.emit('task_remove_error', { message: '正在执行的任务无法移除' })
-            return
-          }
-          
-          // 移除任务
-          taskQueueDb.removeTask(taskId)
-          
-          socket.emit('task_removed', {
-            success: true,
-            message: '任务已从队列中移除'
-          })
-          
-          // 发送更新的队列状态
-          sendQueueStatus(socket, socket.userId)
-          
-        } catch (error) {
-          console.error('移除任务失败:', error)
-          socket.emit('task_remove_error', { message: '移除任务失败' })
-        }
-      })
-      
-      socket.on('start_queue_processing', () => {
-        if (socket.userId) {
-          queueProcessor.startProcessing(socket.userId, (event, data) => {
-            socket.emit(event, data)
-          })
-        }
-      })
-      
-      socket.on('stop_queue_processing', () => {
-         if (socket.userId) {
-           queueProcessor.stopProcessing(socket.userId)
-         }
-       })
-  })
-
-  // 发送游戏状态
-  function sendGameState(socket: any, user: any) {
-  // 检查任务是否完成
-  if (user.gameData.currentTask) {
-    const task = user.gameData.currentTask
-    const now = Date.now()
-    
-    if (task.endTime && now >= task.endTime) {
-      // 任务已完成
-      const rewards = completeTask(user)
-      socket.emit('task_completed', {
-        success: true,
-        rewards: rewards,
-        experience: user.gameData.experience,
-        level: user.gameData.level,
-        skills: {
-          farming: {
-            level: user.gameData.farmingLevel,
-            experience: user.gameData.farmingExp,
-            nextLevelExp: user.gameData.farmingLevel * 100
-          },
-          mining: {
-            level: user.gameData.miningLevel,
-            experience: user.gameData.miningExp,
-            nextLevelExp: user.gameData.miningLevel * 100
-          },
-          agriculture: {
-            level: user.gameData.agricultureLevel,
-            experience: user.gameData.agricultureExp,
-            nextLevelExp: user.gameData.agricultureLevel * 100
-          },
-          fishing: {
-            level: user.gameData.fishingLevel,
-            experience: user.gameData.fishingExp,
-            nextLevelExp: user.gameData.fishingLevel * 100
-          }
-        }
-      })
-    } else if (task.startTime && task.endTime) {
-      // 更新任务进度
-      const elapsed = now - task.startTime
-      const total = task.endTime - task.startTime
-      task.progress = Math.min((elapsed / total) * 100, 100)
-    }
-  }
-  
-  // 计算技能进度百分比
-  const farmingProgress = Math.min(Math.floor((user.gameData.farmingExp / (user.gameData.farmingLevel * 100)) * 100), 100)
-  const miningProgress = Math.min(Math.floor((user.gameData.miningExp / (user.gameData.miningLevel * 100)) * 100), 100)
-  const agricultureProgress = Math.min(Math.floor((user.gameData.agricultureExp / (user.gameData.agricultureLevel * 100)) * 100), 100)
-  const fishingProgress = Math.min(Math.floor((user.gameData.fishingExp / (user.gameData.fishingLevel * 100)) * 100), 100)
-
-  
-  socket.emit('game_state', {
-    currentTask: user.gameData.currentTask,
-    inventory: user.gameData.inventory,
-    experience: user.gameData.experience,
-    level: user.gameData.level,
-    skills: {
-      farming: {
-        level: user.gameData.farmingLevel,
-        experience: user.gameData.farmingExp,
-        nextLevelExp: user.gameData.farmingLevel * 100,
-        progress: farmingProgress
-      },
-      mining: {
-        level: user.gameData.miningLevel,
-        experience: user.gameData.miningExp,
-        nextLevelExp: user.gameData.miningLevel * 100,
-        progress: miningProgress
-      },
-      agriculture: {
-        level: user.gameData.agricultureLevel,
-        experience: user.gameData.agricultureExp,
-        nextLevelExp: user.gameData.agricultureLevel * 100,
-        progress: agricultureProgress
-      },
-      fishing: {
-        level: user.gameData.fishingLevel,
-        experience: user.gameData.fishingExp,
-        nextLevelExp: user.gameData.fishingLevel * 100,
-        progress: fishingProgress
-      }
-    }
-  })
+interface AuthenticatedSocket extends Socket {
+  userId?: string
+  characterId?: string
 }
 
-// 发送包含队列状态的游戏状态
-function sendGameStateWithQueue(socket: any, user: any) {
-  // 发送基础游戏状态
-  sendGameState(socket, user)
-  
-  // 发送队列状态
-  sendQueueStatus(socket, user.id)
-}
-
-// 发送队列状态
-function sendQueueStatus(socket: any, userId: number) {
-  try {
-    const queue = taskQueueDb.getUserQueue(userId)
-    const currentTask = taskQueueDb.getCurrentRunningTask(userId)
-    const queueLength = taskQueueDb.getQueueLength(userId)
+export default defineNitroPlugin(async (nitroApp) => {
+  // 只在开发环境或生产环境中初始化Socket.io
+  if (process.env.NODE_ENV !== 'test') {
+    const { Server } = await import('socket.io')
     
-    // 处理队列数据
-    const processedQueue = queue.map(task => ({
-      ...task,
-      rewards: JSON.parse(task.rewards || '[]'),
-      estimatedEndTime: task.status === 'running' && task.startTime 
-        ? new Date(task.startTime).getTime() + (task.duration * 1000)
-        : null,
-      remainingTime: task.status === 'running' && task.startTime
-        ? Math.max(0, new Date(task.startTime).getTime() + (task.duration * 1000) - Date.now())
-        : null
-    }))
-    
-    // 计算队列总预计时间
-    const totalEstimatedTime = queue.reduce((total, task) => {
-      if (task.status === 'pending') {
-        return total + (task.duration * task.remainingCount)
-      } else if (task.status === 'running') {
-        const remainingTime = task.startTime 
-          ? Math.max(0, new Date(task.startTime).getTime() + (task.duration * 1000) - Date.now())
-          : task.duration * 1000
-        return total + (remainingTime / 1000) + (task.duration * (task.remainingCount - 1))
+    nitroApp.hooks.hook('close', async () => {
+      if (io) {
+        io.close()
       }
-      return total
-    }, 0)
-    
-    socket.emit('queue_status', {
-      queue: processedQueue,
-      currentTask: currentTask ? {
-        ...currentTask,
-        rewards: JSON.parse(currentTask.rewards || '[]'),
-        estimatedEndTime: currentTask.startTime 
-          ? new Date(currentTask.startTime).getTime() + (currentTask.duration * 1000)
-          : null,
-        remainingTime: currentTask.startTime
-          ? Math.max(0, new Date(currentTask.startTime).getTime() + (currentTask.duration * 1000) - Date.now())
-          : null
-      } : null,
-      queueLength,
-      totalEstimatedTime: Math.ceil(totalEstimatedTime)
     })
-  } catch (error) {
-    console.error('发送队列状态错误:', error)
-  }
-}
+    
+    nitroApp.hooks.hook('request', async (event) => {
+      if (!io && event.node.res.socket?.server) {
+        io = new Server(event.node.res.socket.server, {
+          cors: {
+            origin: "*",
+            methods: ["GET", "POST"]
+          }
+        })
 
-  // 开始任务进度更新
-  function startTaskProgress(user: any, socket: any) {
-    const updateInterval = setInterval(() => {
-      if (!user.gameData.currentTask) {
-        clearInterval(updateInterval)
-        return
-      }
-      
-      const task = user.gameData.currentTask
-      const now = Date.now()
-      
-      if (now >= task.endTime) {
-        // 任务完成
-        const rewards = completeTask(user)
-        socket.emit('task_completed', {
-          success: true,
-          rewards: rewards,
-          experience: user.gameData.experience,
-          level: user.gameData.level,
-          skills: {
-            farming: {
-              level: user.gameData.farmingLevel,
-              experience: user.gameData.farmingExp,
-              nextLevelExp: user.gameData.farmingLevel * 100
-            },
-            mining: {
-              level: user.gameData.miningLevel,
-              experience: user.gameData.miningExp,
-              nextLevelExp: user.gameData.miningLevel * 100
-            },
-            agriculture: {
-              level: user.gameData.agricultureLevel,
-              experience: user.gameData.agricultureExp,
-              nextLevelExp: user.gameData.agricultureLevel * 100
-            },
-            fishing: {
-              level: user.gameData.fishingLevel,
-              experience: user.gameData.fishingExp,
-              nextLevelExp: user.gameData.fishingLevel * 100
+        // 认证中间件
+        io.use(async (socket: any, next) => {
+          try {
+            const token = socket.handshake.auth.token
+            if (!token) {
+              return next(new Error('No token provided'))
             }
+
+            const config = useRuntimeConfig()
+            const decoded = jwt.verify(token, config.jwtSecret) as any
+            
+            const character = await prisma.character.findUnique({
+              where: { userId: decoded.userId }
+            })
+
+            if (!character) {
+              return next(new Error('Character not found'))
+            }
+
+            socket.userId = decoded.userId
+            socket.characterId = character.id
+            next()
+          } catch (error) {
+            next(new Error('Authentication failed'))
           }
         })
-        clearInterval(updateInterval)
-      } else {
-        // 更新进度
-        const elapsed = now - task.startTime
-        const total = task.endTime - task.startTime
-        task.progress = Math.min((elapsed / total) * 100, 100)
-        
-        socket.emit('task_progress', {
-          progress: task.progress,
-          remainingTime: task.endTime - now
+
+        // 连接处理
+        io.on('connection', (socket: AuthenticatedSocket) => {
+          console.log(`User ${socket.userId} connected`)
+
+          // 加入用户房间
+          socket.join(`user:${socket.userId}`)
+
+          // 处理开始活动
+          socket.on('start_activity', async (data) => {
+            try {
+              const { type, resourceId } = data
+              
+              // 验证资源点
+              const resource = await prisma.gameResource.findUnique({
+                where: { id: resourceId }
+              })
+
+              if (!resource) {
+                socket.emit('error', { message: '资源点不存在' })
+                return
+              }
+
+              // 验证角色等级
+              const character = await prisma.character.findUnique({
+                where: { id: socket.characterId }
+              })
+
+              if (!character) {
+                socket.emit('error', { message: '角色不存在' })
+                return
+              }
+
+              const skillLevel = getSkillLevel(character, type)
+              if (skillLevel < resource.levelReq) {
+                socket.emit('error', { message: `需要 ${type} 等级 ${resource.levelReq}` })
+                return
+              }
+
+              // 开始活动进度模拟
+              startActivity(socket, resource, type)
+            } catch (error) {
+              socket.emit('error', { message: '开始活动失败' })
+            }
+          })
+
+          // 处理停止活动
+          socket.on('stop_activity', () => {
+            stopActivity(socket)
+          })
+
+          // 队列相关事件
+          socket.on('add_to_queue', (queueData) => {
+            addToQueue(socket, queueData)
+          })
+
+          socket.on('start_immediately', (queueData) => {
+            startImmediately(socket, queueData)
+          })
+
+          socket.on('stop_current_queue', () => {
+            stopCurrentQueue(socket)
+          })
+
+          socket.on('remove_from_queue', (queueId) => {
+            removeFromQueue(socket, queueId)
+          })
+
+          // 断开连接
+          socket.on('disconnect', () => {
+            console.log(`User ${socket.userId} disconnected`)
+            stopActivity(socket)
+            stopCurrentQueue(socket)
+          })
         })
       }
-    }, 1000) // 每秒更新一次
+    })
   }
-
-  // 完成任务
-  function completeTask(user: any) {
-    const task = user.gameData.currentTask
-    const rewards = generateTaskRewards(task)
-    
-    // 添加奖励到仓库
-    user.gameData.inventory.push(...rewards)
-    
-    // 给予经验值
-    user.gameData.experience += task.experience || 10
-    
-    // 检查升级
-    const newLevel = Math.floor(user.gameData.experience / 100) + 1
-    if (newLevel > user.gameData.level) {
-      user.gameData.level = newLevel
-    }
-    
-    // 处理技能经验和等级
-    const taskType = task.type || ''
-    const skillExperience = (task.experience || 10) * 1.5
-    
-    if (taskType.includes('berry') || taskType.includes('herb')) {
-      // 种植技能
-      user.gameData.farmingExp += skillExperience
-      const newFarmingLevel = Math.floor(user.gameData.farmingExp / 100) + 1
-      if (newFarmingLevel > user.gameData.farmingLevel) {
-        user.gameData.farmingLevel = newFarmingLevel
-      }
-    } else if (taskType.includes('mineral')) {
-      // 采矿技能
-      user.gameData.miningExp += skillExperience
-      const newMiningLevel = Math.floor(user.gameData.miningExp / 100) + 1
-      if (newMiningLevel > user.gameData.miningLevel) {
-        user.gameData.miningLevel = newMiningLevel
-      }
-    } else if (taskType.includes('farm') || taskType.includes('agriculture')) {
-      // 农业技能
-      user.gameData.agricultureExp += skillExperience
-      const newAgricultureLevel = Math.floor(user.gameData.agricultureExp / 100) + 1
-      if (newAgricultureLevel > user.gameData.agricultureLevel) {
-        user.gameData.agricultureLevel = newAgricultureLevel
-      }
-    } else if (taskType.includes('fishing') || taskType.includes('fish')) {
-      // 钓鱼技能
-      user.gameData.fishingExp += skillExperience
-      const newFishingLevel = Math.floor(user.gameData.fishingExp / 100) + 1
-      if (newFishingLevel > user.gameData.fishingLevel) {
-        user.gameData.fishingLevel = newFishingLevel
-      }
-    }
-    
-    // 清除当前任务
-    user.gameData.currentTask = null
-    
-    return rewards
-  }
-
-  // 获取任务奖励配置
-  function getTaskRewards(taskType: string) {
-    const rewardConfigs: { [key: string]: any[] } = {
-      'berry': [
-        { item: '蓝莓', quantity: 1, chance: 80 },
-        { item: '草莓', quantity: 1, chance: 60 },
-        { item: '葡萄', quantity: 1, chance: 40 },
-        { item: '竹子', quantity: 1, chance: 1 }
-      ],
-      'herb': [
-        { item: '普通草药', quantity: 1, chance: 70 },
-        { item: '三叶草', quantity: 1, chance: 50 },
-        { item: '嫩芽', quantity: 1, chance: 30 }
-      ],
-      'mineral': [
-        { item: '普通石头', quantity: 1, chance: 90 },
-        { item: '铜矿', quantity: 1, chance: 40 },
-        { item: '银矿', quantity: 1, chance: 10 }
-      ]
-    }
-    
-    return rewardConfigs[taskType] || []
-  }
-
-  // 生成任务奖励
-  function generateTaskRewards(task: any) {
-    const rewards = []
-    
-    for (const reward of task.rewards || []) {
-      if (Math.random() * 100 < reward.chance) {
-        rewards.push({
-          id: `${reward.item}_${Date.now()}_${Math.random()}`,
-          name: reward.item,
-          icon: getItemIcon(reward.item),
-          quantity: reward.quantity,
-          rarity: getItemRarity(reward.item)
-        })
-      }
-    }
-    
-    return rewards
-  }
-
-  // 获取物品图标
-  function getItemIcon(itemName: string) {
-    const icons: { [key: string]: string } = {
-      '蓝莓': '🍎',
-      '草莓': '🍓',
-      '葡萄': '🍇',
-      '竹子': '🥝',
-      '普通草药': '🌿',
-      '三叶草': '🍀',
-      '嫩芽': '🌱',
-      '普通石头': '🪨',
-      '铜矿': '🥉',
-      '银矿': '🥈'
-    }
-    return icons[itemName] || '📦'
-  }
-
-  // 获取物品稀有度
-  function getItemRarity(itemName: string) {
-    const rarities: { [key: string]: string } = {
-      '蓝莓': 'common',
-      '草莓': 'common',
-      '葡萄': 'common',
-      '竹子': 'legendary',
-      '普通草药': 'common',
-      '三叶草': 'common',
-      '嫩芽': 'common',
-      '普通石头': 'common',
-      '铜矿': 'common',
-      '银矿': 'uncommon'
-    }
-    return rarities[itemName] || 'common'
-  }
-
-  // 辅助函数：获取任务名称
-  function getTaskName(taskType: string): string {
-    const taskNames: { [key: string]: string } = {
-      'forest_collect': '森林采集',
-      'mine_collect': '矿洞采集',
-      'farm_collect': '农场采集',
-      'fishing': '钓鱼'
-    }
-    return taskNames[taskType] || '未知任务'
-  }
-  
-  // 辅助函数：获取任务持续时间（秒）
-  function getTaskDuration(taskType: string): number {
-    const durations: { [key: string]: number } = {
-      'forest_collect': 300, // 5分钟
-      'mine_collect': 600,   // 10分钟
-      'farm_collect': 450,   // 7.5分钟
-      'fishing': 360         // 6分钟
-    }
-    return durations[taskType] || 300
-  }
-  
-  // 辅助函数：获取任务经验值
-  function getTaskExperience(taskType: string): number {
-    const experiences: { [key: string]: number } = {
-      'forest_collect': 15,
-      'mine_collect': 25,
-      'farm_collect': 20,
-      'fishing': 18
-    }
-    return experiences[taskType] || 10
-  }
-  
-  // 辅助函数：获取任务技能类型
-  function getTaskSkillType(taskType: string): string {
-    const skillTypes: { [key: string]: string } = {
-      'forest_collect': 'farming',
-      'mine_collect': 'mining',
-      'farm_collect': 'agriculture',
-      'fishing': 'fishing'
-    }
-    return skillTypes[taskType] || 'farming'
-  }
-  
-  // 辅助函数：获取任务奖励配置
-  function getTaskRewards(taskType: string): any[] {
-    const rewardConfigs: { [key: string]: any[] } = {
-      'forest_collect': [
-        { item: '蓝莓', quantity: 2, chance: 80 },
-        { item: '草莓', quantity: 1, chance: 60 },
-        { item: '葡萄', quantity: 1, chance: 40 },
-        { item: '竹子', quantity: 1, chance: 5 }
-      ],
-      'mine_collect': [
-        { item: '普通石头', quantity: 3, chance: 90 },
-        { item: '铜矿', quantity: 2, chance: 40 },
-        { item: '银矿', quantity: 1, chance: 15 },
-        { item: '金矿', quantity: 1, chance: 3 }
-      ],
-      'farm_collect': [
-        { item: '小麦', quantity: 4, chance: 85 },
-        { item: '玉米', quantity: 3, chance: 70 },
-        { item: '土豆', quantity: 2, chance: 55 },
-        { item: '胡萝卜', quantity: 2, chance: 45 }
-      ],
-      'fishing': [
-        { item: '小鱼', quantity: 2, chance: 80 },
-        { item: '中鱼', quantity: 1, chance: 50 },
-        { item: '大鱼', quantity: 1, chance: 20 },
-        { item: '稀有鱼', quantity: 1, chance: 5 }
-      ]
-    }
-    
-    return rewardConfigs[taskType] || []
-  }
-
-  console.log('Socket.IO 服务器已启动')
 })
+
+// 活动管理
+const activeActivities = new Map()
+// 队列管理
+const userQueues = new Map() // 存储用户队列数据
+const activeQueues = new Map() // 存储正在执行的队列
+
+function startActivity(socket: AuthenticatedSocket, resource: any, type: string) {
+  // 停止之前的活动
+  stopActivity(socket)
+
+  const activityId = `${socket.characterId}:${type}`
+  const duration = resource.baseTime * 1000 // 转换为毫秒
+  const startTime = Date.now()
+
+  const interval = setInterval(() => {
+    const elapsed = Date.now() - startTime
+    const progress = Math.min((elapsed / duration) * 100, 100)
+
+    socket.emit('activity_progress', { progress })
+
+    if (progress >= 100) {
+      completeActivity(socket, resource, type)
+    }
+  }, 100)
+
+  activeActivities.set(activityId, {
+    interval,
+    resource,
+    type,
+    startTime
+  })
+}
+
+function stopActivity(socket: AuthenticatedSocket) {
+  const activityId = `${socket.characterId}:mining`
+  const gatheringId = `${socket.characterId}:gathering`
+  const fishingId = `${socket.characterId}:fishing`
+
+  for (const id of [activityId, gatheringId, fishingId]) {
+    const activity = activeActivities.get(id)
+    if (activity) {
+      clearInterval(activity.interval)
+      activeActivities.delete(id)
+    }
+  }
+}
+
+async function completeActivity(socket: AuthenticatedSocket, resource: any, type: string) {
+  try {
+    const activityId = `${socket.characterId}:${type}`
+    stopActivity(socket)
+
+    // 获取角色信息
+    const character = await prisma.character.findUnique({
+      where: { id: socket.characterId }
+    })
+
+    if (!character) return
+
+    // 计算奖励
+    const expReward = resource.expReward
+    const shouldDropItem = Math.random() < resource.dropRate
+
+    // 更新角色数据
+    const updates: any = {
+      exp: character.exp + expReward
+    }
+
+    // 更新技能经验
+    switch (type) {
+      case 'mining':
+        updates.miningExp = character.miningExp + expReward
+        const newMiningLevel = calculateLevel(updates.miningExp)
+        if (newMiningLevel > character.miningLevel) {
+          updates.miningLevel = newMiningLevel
+        }
+        break
+      case 'gathering':
+        updates.gatheringExp = character.gatheringExp + expReward
+        const newGatheringLevel = calculateLevel(updates.gatheringExp)
+        if (newGatheringLevel > character.gatheringLevel) {
+          updates.gatheringLevel = newGatheringLevel
+        }
+        break
+      case 'fishing':
+        updates.fishingExp = character.fishingExp + expReward
+        const newFishingLevel = calculateLevel(updates.fishingExp)
+        if (newFishingLevel > character.fishingLevel) {
+          updates.fishingLevel = newFishingLevel
+        }
+        break
+    }
+
+    // 检查角色等级
+    const newLevel = calculateLevel(updates.exp)
+    if (newLevel > character.level) {
+      updates.level = newLevel
+    }
+
+    const updatedCharacter = await prisma.character.update({
+      where: { id: socket.characterId },
+      data: updates
+    })
+
+    // 添加物品到仓库
+    if (shouldDropItem) {
+      const existingItem = await prisma.inventoryItem.findUnique({
+        where: {
+          characterId_itemId: {
+            characterId: socket.characterId!,
+            itemId: resource.itemId
+          }
+        }
+      })
+
+      if (existingItem) {
+        await prisma.inventoryItem.update({
+          where: { id: existingItem.id },
+          data: { quantity: existingItem.quantity + 1 }
+        })
+      } else {
+        await prisma.inventoryItem.create({
+          data: {
+            characterId: socket.characterId!,
+            itemId: resource.itemId,
+            quantity: 1
+          }
+        })
+      }
+    }
+
+    // 发送更新
+    socket.emit('character_updated', updatedCharacter)
+    socket.emit('activity_completed', {
+      message: `获得 ${expReward} 经验${shouldDropItem ? ' 和 1 个物品' : ''}`,
+      expReward,
+      itemDropped: shouldDropItem
+    })
+
+    // 发送更新的仓库
+    const inventory = await prisma.inventoryItem.findMany({
+      where: { characterId: socket.characterId },
+      include: { item: true }
+    })
+    socket.emit('inventory_updated', inventory)
+
+  } catch (error) {
+    console.error('Complete activity error:', error)
+    socket.emit('error', { message: '完成活动时发生错误' })
+  }
+}
+
+function getSkillLevel(character: any, type: string) {
+  switch (type) {
+    case 'mining':
+      return character.miningLevel
+    case 'gathering':
+      return character.gatheringLevel
+    case 'fishing':
+      return character.fishingLevel
+    case 'cooking':
+      return character.cookingLevel
+    case 'crafting':
+      return character.craftingLevel
+    default:
+      return 1
+  }
+}
+
+function calculateLevel(exp: number) {
+  return Math.floor(Math.sqrt(exp / 100)) + 1
+}
+
+// 队列管理函数
+function getUserQueues(characterId: string) {
+  if (!userQueues.has(characterId)) {
+    userQueues.set(characterId, {
+      current: null,
+      pending: []
+    })
+  }
+  return userQueues.get(characterId)
+}
+
+function addToQueue(socket: AuthenticatedSocket, queueData: any) {
+  const queues = getUserQueues(socket.characterId!)
+  queues.pending.push(queueData)
+  
+  // 通知客户端队列更新
+  socket.emit('queue_updated', queues.pending)
+}
+
+function startImmediately(socket: AuthenticatedSocket, queueData: any) {
+  const queues = getUserQueues(socket.characterId!)
+  
+  // 先停止当前正在运行的队列活动
+  const queueId = `${socket.characterId}:queue`
+  const activity = activeQueues.get(queueId)
+  if (activity) {
+    clearInterval(activity.interval)
+    activeQueues.delete(queueId)
+  }
+  
+  // 如果有当前队列，将其移到待开始队列的第一位
+  if (queues.current) {
+    queues.pending.unshift(queues.current)
+  }
+  
+  // 开始新队列，确保设置初始重复次数
+  queueData.currentRepeat = queueData.currentRepeat || 1
+  queues.current = queueData
+  startQueueActivity(socket, queueData)
+  
+  // 通知客户端
+  socket.emit('queue_updated', queues.pending)
+}
+
+function stopCurrentQueue(socket: AuthenticatedSocket) {
+  const queues = getUserQueues(socket.characterId!)
+  const queueId = `${socket.characterId}:queue`
+  
+  // 停止当前队列活动
+  const activity = activeQueues.get(queueId)
+  if (activity) {
+    clearInterval(activity.interval)
+    activeQueues.delete(queueId)
+  }
+  
+  queues.current = null
+  
+  // 自动开始下一个队列
+  if (queues.pending.length > 0) {
+    const nextQueue = queues.pending.shift()
+    queues.current = nextQueue
+    startQueueActivity(socket, nextQueue)
+    socket.emit('queue_updated', queues.pending)
+  }
+}
+
+function removeFromQueue(socket: AuthenticatedSocket, queueId: string) {
+  const queues = getUserQueues(socket.characterId!)
+  const index = queues.pending.findIndex(q => q.id === queueId)
+  
+  if (index !== -1) {
+    queues.pending.splice(index, 1)
+    socket.emit('queue_updated', queues.pending)
+  }
+}
+
+async function startQueueActivity(socket: AuthenticatedSocket, queueData: any) {
+  try {
+    // 获取资源信息
+    const resource = await prisma.gameResource.findUnique({
+      where: { id: queueData.resourceId }
+    })
+    
+    if (!resource) {
+      socket.emit('error', { message: '资源点不存在' })
+      return
+    }
+    
+    const queueId = `${socket.characterId}:queue`
+    
+    // 检查是否已有活动在运行，如果有则先停止
+    const existingActivity = activeQueues.get(queueId)
+    if (existingActivity) {
+      clearInterval(existingActivity.interval)
+      activeQueues.delete(queueId)
+    }
+    
+    const duration = resource.baseTime * 1000 // 转换为毫秒
+    const startTime = Date.now()
+    
+    const interval = setInterval(() => {
+      const elapsed = Date.now() - startTime
+      const progress = Math.min((elapsed / duration) * 100, 100)
+      const remainingTime = Math.max(0, duration - elapsed)
+      
+      // 发送进度更新
+      socket.emit('queue_progress', {
+        progress,
+        remainingTime: Math.ceil(remainingTime / 1000),
+        currentRepeat: queueData.currentRepeat || 1,
+        totalRepeat: queueData.totalRepeat || 1
+      })
+      
+      if (progress >= 100) {
+        completeQueueActivity(socket, queueData, resource)
+      }
+    }, 100)
+    
+    activeQueues.set(queueId, {
+      interval,
+      queueData,
+      resource,
+      startTime
+    })
+    
+  } catch (error) {
+    console.error('Start queue activity error:', error)
+    socket.emit('error', { message: '开始队列活动失败' })
+  }
+}
+
+async function completeQueueActivity(socket: AuthenticatedSocket, queueData: any, resource: any) {
+  try {
+    const queueId = `${socket.characterId}:queue`
+    const activity = activeQueues.get(queueId)
+    
+    // 确保清理当前活动
+    if (activity) {
+      clearInterval(activity.interval)
+      activeQueues.delete(queueId)
+    }
+    
+    // 处理奖励（复用原有逻辑）
+    await processActivityReward(socket, resource, queueData.activityType)
+    
+    const queues = getUserQueues(socket.characterId!)
+    
+    // 确保有正确的重复次数设置
+    const currentRepeat = queueData.currentRepeat || 1
+    const totalRepeat = queueData.totalRepeat || 1
+    
+    // 检查是否还有重复次数
+    if (currentRepeat < totalRepeat) {
+      // 更新重复次数并继续
+      queueData.currentRepeat = currentRepeat + 1
+      
+      // 延迟一小段时间再开始下一次，避免立即重复
+      setTimeout(() => {
+        startQueueActivity(socket, queueData)
+      }, 100)
+    } else {
+      // 队列完成
+      queues.current = null
+      socket.emit('queue_completed', {
+        message: `队列完成: ${queueData.resourceName} x${totalRepeat}`
+      })
+      
+      // 自动开始下一个队列
+      if (queues.pending.length > 0) {
+        const nextQueue = queues.pending.shift()
+        nextQueue.currentRepeat = 1
+        queues.current = nextQueue
+        
+        // 延迟一小段时间再开始下一个队列
+        setTimeout(() => {
+          startQueueActivity(socket, nextQueue)
+        }, 100)
+        socket.emit('queue_updated', queues.pending)
+      }
+    }
+    
+  } catch (error) {
+    console.error('Complete queue activity error:', error)
+    socket.emit('error', { message: '完成队列活动时发生错误' })
+  }
+}
+
+async function processActivityReward(socket: AuthenticatedSocket, resource: any, type: string) {
+  // 获取角色信息
+  const character = await prisma.character.findUnique({
+    where: { id: socket.characterId }
+  })
+  
+  if (!character) return
+  
+  // 计算奖励
+  const expReward = resource.expReward
+  
+  // 更新角色数据
+  const updates: any = {
+    exp: character.exp + expReward
+  }
+  
+  // 获取当前技能等级用于掉落计算
+  let currentSkillLevel = 1
+  
+  // 更新技能经验并获取当前技能等级
+  switch (type) {
+    case 'mining':
+      updates.miningExp = character.miningExp + expReward
+      currentSkillLevel = character.miningLevel
+      const newMiningLevel = calculateLevel(updates.miningExp)
+      if (newMiningLevel > character.miningLevel) {
+        updates.miningLevel = newMiningLevel
+      }
+      break
+    case 'gathering':
+      updates.gatheringExp = character.gatheringExp + expReward
+      currentSkillLevel = character.gatheringLevel
+      const newGatheringLevel = calculateLevel(updates.gatheringExp)
+      if (newGatheringLevel > character.gatheringLevel) {
+        updates.gatheringLevel = newGatheringLevel
+      }
+      break
+    case 'fishing':
+      updates.fishingExp = character.fishingExp + expReward
+      currentSkillLevel = character.fishingLevel
+      const newFishingLevel = calculateLevel(updates.fishingExp)
+      if (newFishingLevel > character.fishingLevel) {
+        updates.fishingLevel = newFishingLevel
+      }
+      break
+  }
+  
+  // 检查角色等级
+  const newLevel = calculateLevel(updates.exp)
+  if (newLevel > character.level) {
+    updates.level = newLevel
+  }
+  
+  const updatedCharacter = await prisma.character.update({
+    where: { id: socket.characterId },
+    data: updates
+  })
+  
+  // 改进的物品掉落系统
+  const droppedItems = await calculateItemDrops(type, currentSkillLevel, resource)
+  
+  // 添加掉落的物品到仓库
+  for (const drop of droppedItems) {
+    const existingItem = await prisma.inventoryItem.findUnique({
+      where: {
+        characterId_itemId: {
+          characterId: socket.characterId!,
+          itemId: drop.itemId
+        }
+      }
+    })
+    
+    if (existingItem) {
+      await prisma.inventoryItem.update({
+        where: { id: existingItem.id },
+        data: { quantity: existingItem.quantity + drop.quantity }
+      })
+    } else {
+      await prisma.inventoryItem.create({
+        data: {
+          characterId: socket.characterId!,
+          itemId: drop.itemId,
+          quantity: drop.quantity
+        }
+      })
+    }
+  }
+  
+  // 发送更新
+  socket.emit('character_updated', updatedCharacter)
+  
+  // 发送更新的仓库
+  const inventory = await prisma.inventoryItem.findMany({
+    where: { characterId: socket.characterId },
+    include: { item: true }
+  })
+  socket.emit('inventory_updated', inventory)
+  
+  // 发送掉落通知
+  if (droppedItems.length > 0) {
+    const itemNames = await Promise.all(
+      droppedItems.map(async (drop) => {
+        const item = await prisma.item.findUnique({ where: { id: drop.itemId } })
+        return `${item?.name} x${drop.quantity}`
+      })
+    )
+    socket.emit('item_dropped', {
+      message: `获得物品: ${itemNames.join(', ')}`,
+      items: droppedItems
+    })
+  }
+}
+
+// 新增：计算物品掉落的函数
+async function calculateItemDrops(activityType: string, skillLevel: number, resource: any) {
+  const drops: Array<{ itemId: string; quantity: number }> = []
+  
+  // 基础掉落：资源点的主要物品
+  const baseDropRate = Math.min(0.8 + (skillLevel * 0.01), 0.95) // 80%基础掉落率，技能等级每级+1%，最高95%
+  if (Math.random() < baseDropRate) {
+    drops.push({ itemId: resource.itemId, quantity: 1 })
+  }
+  
+  // 根据活动类型获取可能的额外掉落物品
+  const possibleItems = await getPossibleDropsByActivity(activityType, skillLevel)
+  
+  // 计算额外掉落
+  for (const item of possibleItems) {
+    const dropChance = item.dropRate * (1 + skillLevel * 0.005) // 技能等级影响掉落率
+    if (Math.random() < dropChance) {
+      drops.push({ itemId: item.id, quantity: 1 })
+    }
+  }
+  
+  return drops
+}
+
+// 新增：根据活动类型获取可能的掉落物品
+async function getPossibleDropsByActivity(activityType: string, skillLevel: number) {
+  const items = []
+  
+  switch (activityType) {
+    case 'mining':
+      // 挖矿可能掉落的物品
+      const miningItems = await prisma.item.findMany({
+        where: {
+          type: 'material',
+          name: {
+            contains: '矿石'
+          }
+        }
+      })
+      
+      for (const item of miningItems) {
+        let dropRate = 0
+        switch (item.rarity) {
+          case 'common': dropRate = skillLevel >= 1 ? 0.15 : 0; break
+          case 'uncommon': dropRate = skillLevel >= 10 ? 0.08 : 0; break
+          case 'rare': dropRate = skillLevel >= 25 ? 0.04 : 0; break
+          case 'epic': dropRate = skillLevel >= 40 ? 0.02 : 0; break
+          case 'legendary': dropRate = skillLevel >= 60 ? 0.01 : 0; break
+        }
+        if (dropRate > 0) {
+          items.push({ ...item, dropRate })
+        }
+      }
+      break
+      
+    case 'gathering':
+      // 采集可能掉落的物品
+      const gatheringItems = await prisma.item.findMany({
+        where: {
+          OR: [
+            { name: { contains: '草' } },
+            { name: { contains: '莓' } },
+            { name: { contains: '药' } },
+            { name: { contains: '花' } },
+            { name: { contains: '叶' } },
+            { name: { contains: '果实' } }
+          ]
+        }
+      })
+      
+      for (const item of gatheringItems) {
+        let dropRate = 0
+        switch (item.rarity) {
+          case 'common': dropRate = skillLevel >= 1 ? 0.12 : 0; break
+          case 'uncommon': dropRate = skillLevel >= 8 ? 0.06 : 0; break
+          case 'rare': dropRate = skillLevel >= 20 ? 0.03 : 0; break
+          case 'epic': dropRate = skillLevel >= 35 ? 0.015 : 0; break
+          case 'legendary': dropRate = skillLevel >= 55 ? 0.008 : 0; break
+        }
+        if (dropRate > 0) {
+          items.push({ ...item, dropRate })
+        }
+      }
+      break
+      
+    case 'fishing':
+      // 钓鱼可能掉落的物品
+      const fishingItems = await prisma.item.findMany({
+        where: {
+          name: {
+            contains: '鱼'
+          }
+        }
+      })
+      
+      for (const item of fishingItems) {
+        let dropRate = 0
+        switch (item.rarity) {
+          case 'common': dropRate = skillLevel >= 1 ? 0.18 : 0; break
+          case 'uncommon': dropRate = skillLevel >= 12 ? 0.09 : 0; break
+          case 'rare': dropRate = skillLevel >= 28 ? 0.045 : 0; break
+          case 'epic': dropRate = skillLevel >= 45 ? 0.02 : 0; break
+          case 'legendary': dropRate = skillLevel >= 65 ? 0.01 : 0; break
+        }
+        if (dropRate > 0) {
+          items.push({ ...item, dropRate })
+        }
+      }
+      break
+  }
+  
+  return items
+}

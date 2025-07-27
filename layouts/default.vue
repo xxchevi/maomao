@@ -14,12 +14,12 @@
           <div class="flex items-center space-x-4" v-if="authStore.isLoggedIn">
             <!-- 角色信息 -->
             <div class="flex items-center space-x-2 text-sm" v-if="authStore.character">
-              <span class="text-gray-600">{{ authStore.character.name }}</span>
+              <span class="text-gray-600">{{ authStore.character?.name }}</span>
               <span class="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs">
-                Lv.{{ authStore.character.level }}
+                Lv.{{ authStore.character?.level }}
               </span>
               <span class="bg-yellow-100 text-yellow-800 px-2 py-1 rounded-full text-xs">
-                💰 {{ authStore.character.coins }}
+                💰 {{ authStore.character?.coins }}
               </span>
             </div>
             

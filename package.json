@@ -13,19 +13,22 @@
   },
   "devDependencies": {
     "@nuxt/devtools": "latest",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/jsonwebtoken": "^9.0.10",
     "nuxt": "^3.8.0",
     "prisma": "^5.6.0"
   },
   "dependencies": {
-    "@prisma/client": "^5.6.0",
     "@nuxtjs/tailwindcss": "^6.8.4",
     "@pinia/nuxt": "^0.5.1",
+    "@prisma/client": "^5.6.0",
     "@sidebase/nuxt-auth": "^0.6.2",
     "bcryptjs": "^2.4.3",
     "jsonwebtoken": "^9.0.2",
+    "node-cron": "^3.0.3",
     "pinia": "^2.1.7",
     "socket.io": "^4.7.4",
     "socket.io-client": "^4.7.4",
-    "node-cron": "^3.0.3"
+    "tailwindcss": "^3.4.17"
   }
 }

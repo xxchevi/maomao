@@ -4,18 +4,12 @@ export default defineNuxtConfig({
   modules: [
     '@nuxtjs/tailwindcss',
     '@pinia/nuxt',
-    '@sidebase/nuxt-auth'
+
   ],
-  auth: {
-    baseURL: process.env.AUTH_ORIGIN,
-    provider: {
-      type: 'local'
-    }
-  },
-  runtimeConfig: {
+runtimeConfig: {
     jwtSecret: process.env.JWT_SECRET || 'your-secret-key',
     public: {
-      authUrl: process.env.NUXT_PUBLIC_AUTH_URL || 'http://localhost:3000'
+      authUrl: process.env.NUXT_PUBLIC_AUTH_URL || ''
     }
   },
   nitro: {

@@ -2,7 +2,8 @@
 node_modules
 /dist
 .scannerwork
-
+# Nuxt build output
+.nuxt
 # local env files
 .env.local
 .env.*.local

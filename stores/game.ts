@@ -75,15 +75,30 @@ export const useGameStore = defineStore('game', {
   actions: {
     initSocket() {
       if (process.client && !this.socket) {
-        this.socket = io('http://localhost:3000', {
+        const authStore = useAuthStore()
+        const token = authStore.token
+        
+        if (!token) {
+          console.error('No token available for socket connection')
+          return
+        }
+
+        this.socket = io('http://localhost:3001', {
           auth: {
-            token: localStorage.getItem('auth-token')
-          }
+            token: token
+          },
+          forceNew: true,
+          reconnection: true,
+          reconnectionAttempts: 5,
+          reconnectionDelay: 1000
         })
 
         this.socket.on('connect', () => {
           this.isConnected = true
           console.log('Socket connected')
+          
+          // 连接成功后请求恢复队列状态
+          this.socket?.emit('restore_queues')
         })
 
         this.socket.on('disconnect', () => {

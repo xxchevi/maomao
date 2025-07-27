@@ -1,24 +1,29 @@
 <template>
   <div class="space-y-6">
     <!-- 角色状态栏 -->
-    <div class="game-card" v-if="authStore.character">
+    <div class="game-card" v-if="authStore.isLoggedIn">
+  <div v-if="!authStore.character" class="text-center py-8">
+    <h3 class="text-xl font-semibold mb-4">角色不存在</h3>
+    <p class="mb-6">请先创建您的游戏角色</p>
+    <button @click="createCharacter" class="btn-primary">创建角色</button>
+  </div>
       <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div class="text-center">
           <div class="text-2xl mb-1">🐱</div>
-          <div class="text-sm text-gray-600">{{ authStore.character.name }}</div>
-          <div class="font-semibold">Lv.{{ authStore.character.level }}</div>
+          <div class="text-sm text-gray-600">{{ authStore.character?.name }}</div>
+          <div class="font-semibold">Lv.{{ authStore.character?.level }}</div>
         </div>
         
         <div class="text-center">
           <div class="text-2xl mb-1">⭐</div>
           <div class="text-sm text-gray-600">经验</div>
-          <div class="font-semibold">{{ authStore.character.exp }}</div>
+          <div class="font-semibold">{{ authStore.character?.exp }}</div>
         </div>
         
         <div class="text-center">
           <div class="text-2xl mb-1">💰</div>
           <div class="text-sm text-gray-600">金币</div>
-          <div class="font-semibold text-yellow-600">{{ authStore.character.coins }}</div>
+          <div class="font-semibold text-yellow-600">{{ authStore.character?.coins }}</div>
         </div>
         
         <div class="text-center">
@@ -35,7 +40,7 @@
     <QueuePanel />
 
     <!-- 技能面板 -->
-    <div class="game-card" v-if="authStore.character">
+    <div class="game-card" v-if="authStore.isLoggedIn && authStore.character">
       <h2 class="text-xl font-bold mb-4">技能等级</h2>
       
       <div class="grid md:grid-cols-2 gap-4">
@@ -45,12 +50,12 @@
               <span class="mr-2">⛏️</span>
               挖矿
             </span>
-            <span class="font-semibold">Lv.{{ authStore.character.miningLevel }}</span>
+            <span class="font-semibold">Lv.{{ authStore.character?.miningLevel }}</span>
           </div>
           <div class="skill-bar">
             <div 
               class="skill-progress" 
-              :style="{ width: getSkillProgress(authStore.character.miningExp, authStore.character.miningLevel) + '%' }"
+              :style="{ width: getSkillProgress(authStore.character?.miningExp, authStore.character?.miningLevel) + '%' }"
             ></div>
           </div>
           
@@ -59,12 +64,12 @@
               <span class="mr-2">🌿</span>
               采集
             </span>
-            <span class="font-semibold">Lv.{{ authStore.character.gatheringLevel }}</span>
+            <span class="font-semibold">Lv.{{ authStore.character?.gatheringLevel }}</span>
           </div>
           <div class="skill-bar">
             <div 
               class="skill-progress" 
-              :style="{ width: getSkillProgress(authStore.character.gatheringExp, authStore.character.gatheringLevel) + '%' }"
+              :style="{ width: getSkillProgress(authStore.character?.gatheringExp, authStore.character?.gatheringLevel) + '%' }"
             ></div>
           </div>
           
@@ -73,12 +78,12 @@
               <span class="mr-2">🎣</span>
               钓鱼
             </span>
-            <span class="font-semibold">Lv.{{ authStore.character.fishingLevel }}</span>
+            <span class="font-semibold">Lv.{{ authStore.character?.fishingLevel }}</span>
           </div>
           <div class="skill-bar">
             <div 
               class="skill-progress" 
-              :style="{ width: getSkillProgress(authStore.character.fishingExp, authStore.character.fishingLevel) + '%' }"
+              :style="{ width: getSkillProgress(authStore.character?.fishingExp, authStore.character?.fishingLevel) + '%' }"
             ></div>
           </div>
         </div>
@@ -89,12 +94,12 @@
               <span class="mr-2">🍳</span>
               烹饪
             </span>
-            <span class="font-semibold">Lv.{{ authStore.character.cookingLevel }}</span>
+            <span class="font-semibold">Lv.{{ authStore.character?.cookingLevel }}</span>
           </div>
           <div class="skill-bar">
             <div 
               class="skill-progress" 
-              :style="{ width: getSkillProgress(authStore.character.cookingExp, authStore.character.cookingLevel) + '%' }"
+              :style="{ width: getSkillProgress(authStore.character?.cookingExp, authStore.character?.cookingLevel) + '%' }"
             ></div>
           </div>
           
@@ -103,12 +108,12 @@
               <span class="mr-2">🔨</span>
               制作
             </span>
-            <span class="font-semibold">Lv.{{ authStore.character.craftingLevel }}</span>
+            <span class="font-semibold">Lv.{{ authStore.character?.craftingLevel }}</span>
           </div>
           <div class="skill-bar">
             <div 
               class="skill-progress" 
-              :style="{ width: getSkillProgress(authStore.character.craftingExp, authStore.character.craftingLevel) + '%' }"
+              :style="{ width: getSkillProgress(authStore.character?.craftingExp, authStore.character?.craftingLevel) + '%' }"
             ></div>
           </div>
         </div>
@@ -132,12 +137,12 @@
             @click="openActivityModal('mining', resource)"
           >
             <div class="flex-1">
-              <div class="font-semibold">{{ resource.name }}</div>
+              <div class="font-semibold">{{ resource?.name }}</div>
               <div class="text-sm text-gray-600">
-                需要等级: {{ resource.levelReq }} | 经验: +{{ resource.expReward }}
+                需要等级: {{ resource?.levelReq }} | 经验: +{{ resource?.expReward }}
               </div>
               <div class="text-xs text-gray-500">
-                基础时间: {{ resource.baseTime }}秒
+                基础时间: {{ resource?.baseTime }}秒
               </div>
             </div>
             <div class="text-2xl">⛏️</div>
@@ -160,12 +165,12 @@
             @click="openActivityModal('gathering', resource)"
           >
             <div class="flex-1">
-              <div class="font-semibold">{{ resource.name }}</div>
+              <div class="font-semibold">{{ resource?.name }}</div>
               <div class="text-sm text-gray-600">
-                需要等级: {{ resource.levelReq }} | 经验: +{{ resource.expReward }}
+                需要等级: {{ resource?.levelReq }} | 经验: +{{ resource?.expReward }}
               </div>
               <div class="text-xs text-gray-500">
-                基础时间: {{ resource.baseTime }}秒
+                基础时间: {{ resource?.baseTime }}秒
               </div>
             </div>
             <div class="text-2xl">🌿</div>
@@ -188,12 +193,12 @@
             @click="openActivityModal('fishing', resource)"
           >
             <div class="flex-1">
-              <div class="font-semibold">{{ resource.name }}</div>
+              <div class="font-semibold">{{ resource?.name }}</div>
               <div class="text-sm text-gray-600">
-                需要等级: {{ resource.levelReq }} | 经验: +{{ resource.expReward }}
+                需要等级: {{ resource?.levelReq }} | 经验: +{{ resource?.expReward }}
               </div>
               <div class="text-xs text-gray-500">
-                基础时间: {{ resource.baseTime }}秒
+                基础时间: {{ resource?.baseTime }}秒
               </div>
             </div>
             <div class="text-2xl">🎣</div>
@@ -252,6 +257,31 @@ const handleStartImmediately = async (params) => {
   await gameStore.startImmediately(params)
 }
 
+// 创建角色
+const createCharacter = async () => {
+  try {
+    const characterName = prompt('请输入角色名称:')
+    if (!characterName) return
+    
+    const { data } = await $fetch('/api/auth/create-character', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${authStore.token}`
+      },
+      body: { name: characterName }
+    })
+    
+    authStore.updateCharacter(data.character)
+    
+    // 重新初始化游戏数据
+    gameStore.initSocket()
+    await gameStore.loadGameData()
+  } catch (error) {
+    console.error('创建角色失败:', error)
+    alert('创建角色失败，请重试')
+  }
+}
+
 // 兼容旧的方法
 const startActivity = async (type, resourceId) => {
   await gameStore.startActivity(type, resourceId)
@@ -285,7 +315,5 @@ useHead({
 })
 
 // 页面守卫
-definePageMeta({
-  middleware: 'auth'
-})
+definePageMeta({})
 </script>

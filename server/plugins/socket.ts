@@ -9,7 +9,10 @@ interface AuthenticatedSocket extends Socket {
   userId?: string
   characterId?: string
 }
-
+interface QueueItem {
+  id: string
+  [key: string]: any // 允许其他动态属性
+}
 export default defineNitroPlugin(async (nitroApp) => {
   // 只在开发环境或生产环境中初始化Socket.io
   if (process.env.NODE_ENV !== 'test') {
@@ -22,8 +25,9 @@ export default defineNitroPlugin(async (nitroApp) => {
     })
     
     nitroApp.hooks.hook('request', async (event) => {
-      if (!io && event.node.res.socket?.server) {
-        io = new Server(event.node.res.socket.server, {
+      const httpServer = (event.node.res as any).socket?.server || (event.node.res as any).connection?.server;
+      if (!io && httpServer) {
+        io = new Server(httpServer, {
           cors: {
             origin: "*",
             methods: ["GET", "POST"]
@@ -108,20 +112,42 @@ export default defineNitroPlugin(async (nitroApp) => {
           })
 
           // 队列相关事件
-          socket.on('add_to_queue', (queueData) => {
-            addToQueue(socket, queueData)
+          socket.on('add_to_queue', async (queueData) => {
+            await addToQueue(socket, queueData)
           })
 
-          socket.on('start_immediately', (queueData) => {
-            startImmediately(socket, queueData)
+          socket.on('start_immediately', async (queueData) => {
+            await startImmediately(socket, queueData)
           })
 
-          socket.on('stop_current_queue', () => {
-            stopCurrentQueue(socket)
+          socket.on('stop_current_queue', async () => {
+            await stopCurrentQueue(socket)
           })
 
-          socket.on('remove_from_queue', (queueId) => {
-            removeFromQueue(socket, queueId)
+          socket.on('remove_from_queue', async (queueId) => {
+            await removeFromQueue(socket, queueId)
+          })
+
+          // 恢复队列状态
+          socket.on('restore_queues', async () => {
+            try {
+              const queues = await getUserQueues(socket.characterId!)
+              socket.emit('queue_updated', queues.pending)
+              
+              // 如果有当前正在进行的队列，恢复进度
+              if (queues.current) {
+                const queueId = `${socket.characterId}:queue`
+                const existingActivity = activeQueues.get(queueId)
+                
+                if (!existingActivity) {
+                  // 重新开始当前队列
+                  await startQueueActivity(socket, queues.current)
+                }
+              }
+            } catch (error) {
+              console.error('Restore queues error:', error)
+              socket.emit('error', { message: '恢复队列状态失败' })
+            }
           })
 
           // 断开连接
@@ -310,26 +336,226 @@ function calculateLevel(exp: number) {
 }
 
 // 队列管理函数
-function getUserQueues(characterId: string) {
+async function getUserQueues(characterId: string) {
   if (!userQueues.has(characterId)) {
+    // 从数据库恢复离线队列
+    await restoreOfflineQueues(characterId)
+  }
+  return userQueues.get(characterId)
+}
+
+// 恢复离线队列
+async function restoreOfflineQueues(characterId: string) {
+  try {
+    // 获取角色信息
+    const character = await prisma.character.findUnique({
+      where: { id: characterId },
+      include: { offlineTasks: { where: { status: 'active' } } }
+    })
+    
+    if (!character) return
+    
+    const queues = {
+      current: null,
+      pending: []
+    }
+    
+    // 计算离线时间
+    const offlineTime = Date.now() - new Date(character.lastOnline).getTime()
+    
+    // 处理离线任务
+    for (const task of character.offlineTasks) {
+      const taskDuration = task.duration * 1000 // 转换为毫秒
+      const taskStartTime = new Date(task.startedAt).getTime()
+      const taskElapsed = Date.now() - taskStartTime
+      
+      if (taskElapsed >= taskDuration) {
+        // 任务已完成，处理奖励
+        await completeOfflineTask(task)
+      } else {
+        // 任务仍在进行中，恢复到队列
+        const resource = await prisma.gameResource.findFirst({
+          where: { type: task.type }
+        })
+        
+        if (resource) {
+          const queueData = {
+            id: task.id,
+            activityType: task.type,
+            resourceId: resource.id,
+            resourceName: resource.name,
+            totalRepeat: 1,
+            currentRepeat: 1,
+            progress: Math.min((taskElapsed / taskDuration) * 100, 100),
+            remainingTime: Math.max(0, Math.ceil((taskDuration - taskElapsed) / 1000)),
+            estimatedTime: resource.baseTime,
+            createdAt: taskStartTime
+          }
+          
+          if (!queues.current) {
+            queues.current = queueData
+          } else {
+            queues.pending.push(queueData)
+          }
+        }
+      }
+    }
+    
+    userQueues.set(characterId, queues)
+    
+    // 更新最后在线时间
+    await prisma.character.update({
+      where: { id: characterId },
+      data: { lastOnline: new Date() }
+    })
+    
+  } catch (error) {
+    console.error('Error restoring offline queues:', error)
     userQueues.set(characterId, {
       current: null,
       pending: []
     })
   }
-  return userQueues.get(characterId)
 }
 
-function addToQueue(socket: AuthenticatedSocket, queueData: any) {
-  const queues = getUserQueues(socket.characterId!)
+// 完成离线任务
+async function completeOfflineTask(task: any) {
+  try {
+    // 标记任务为完成
+    await prisma.offlineTask.update({
+      where: { id: task.id },
+      data: { 
+        status: 'completed',
+        completedAt: new Date()
+      }
+    })
+    
+    // 处理奖励（经验、物品等）
+    if (task.expReward > 0) {
+      const character = await prisma.character.findUnique({
+        where: { id: task.characterId }
+      })
+      
+      if (character) {
+        const skillField = getSkillField(task.type)
+        const expField = getExpField(task.type)
+        
+        if (skillField && expField) {
+          const newExp = character[expField] + task.expReward
+          const newLevel = calculateLevel(newExp)
+          
+          await prisma.character.update({
+            where: { id: task.characterId },
+            data: {
+              [expField]: newExp,
+              [skillField]: newLevel
+            }
+          })
+        }
+      }
+    }
+    
+    // 处理物品奖励
+    if (task.itemRewards) {
+      const rewards = JSON.parse(task.itemRewards)
+      for (const reward of rewards) {
+        await addItemToInventory(task.characterId, reward.itemId, reward.quantity)
+      }
+    }
+    
+  } catch (error) {
+    console.error('Error completing offline task:', error)
+  }
+}
+
+// 保存队列到数据库
+async function saveQueueToDatabase(characterId: string, queueData: any) {
+  try {
+    const resource = await prisma.gameResource.findUnique({
+      where: { id: queueData.resourceId }
+    })
+    
+    if (!resource) return
+    
+    // 创建或更新离线任务
+    await prisma.offlineTask.upsert({
+      where: { id: queueData.id },
+      update: {
+        type: queueData.activityType,
+        duration: resource.baseTime * (queueData.totalRepeat || 1),
+        progress: queueData.progress || 0,
+        expReward: resource.expReward * (queueData.totalRepeat || 1),
+        startedAt: new Date(queueData.createdAt || Date.now())
+      },
+      create: {
+        id: queueData.id,
+        characterId,
+        type: queueData.activityType,
+        duration: resource.baseTime * (queueData.totalRepeat || 1),
+        progress: queueData.progress || 0,
+        expReward: resource.expReward * (queueData.totalRepeat || 1),
+        startedAt: new Date(queueData.createdAt || Date.now())
+      }
+    })
+  } catch (error) {
+    console.error('Error saving queue to database:', error)
+  }
+}
+
+// 取消数据库中的队列
+async function cancelQueueInDatabase(queueId: string) {
+  try {
+    await prisma.offlineTask.updateMany({
+      where: { 
+        id: queueId,
+        status: 'active'
+      },
+      data: { 
+        status: 'cancelled'
+      }
+    })
+  } catch (error) {
+    console.error('Error cancelling queue in database:', error)
+  }
+}
+
+// 获取技能字段名
+function getSkillField(activityType: string): string | null {
+  const skillMap: { [key: string]: string } = {
+    'mining': 'miningLevel',
+    'gathering': 'gatheringLevel', 
+    'fishing': 'fishingLevel',
+    'cooking': 'cookingLevel',
+    'crafting': 'craftingLevel'
+  }
+  return skillMap[activityType] || null
+}
+
+// 获取经验字段名
+function getExpField(activityType: string): string | null {
+  const expMap: { [key: string]: string } = {
+    'mining': 'miningExp',
+    'gathering': 'gatheringExp',
+    'fishing': 'fishingExp', 
+    'cooking': 'cookingExp',
+    'crafting': 'craftingExp'
+  }
+  return expMap[activityType] || null
+}
+
+async function addToQueue(socket: AuthenticatedSocket, queueData: any) {
+  const queues = await getUserQueues(socket.characterId!)
   queues.pending.push(queueData)
+  
+  // 持久化队列到数据库
+  await saveQueueToDatabase(socket.characterId!, queueData)
   
   // 通知客户端队列更新
   socket.emit('queue_updated', queues.pending)
 }
 
-function startImmediately(socket: AuthenticatedSocket, queueData: any) {
-  const queues = getUserQueues(socket.characterId!)
+async function startImmediately(socket: AuthenticatedSocket, queueData: any) {
+  const queues = await getUserQueues(socket.characterId!)
   
   // 先停止当前正在运行的队列活动
   const queueId = `${socket.characterId}:queue`
@@ -342,19 +568,24 @@ function startImmediately(socket: AuthenticatedSocket, queueData: any) {
   // 如果有当前队列，将其移到待开始队列的第一位
   if (queues.current) {
     queues.pending.unshift(queues.current)
+    await saveQueueToDatabase(socket.characterId!, queues.current)
   }
   
   // 开始新队列，确保设置初始重复次数
   queueData.currentRepeat = queueData.currentRepeat || 1
   queues.current = queueData
+  
+  // 持久化当前队列
+  await saveQueueToDatabase(socket.characterId!, queueData)
+  
   startQueueActivity(socket, queueData)
   
   // 通知客户端
   socket.emit('queue_updated', queues.pending)
 }
 
-function stopCurrentQueue(socket: AuthenticatedSocket) {
-  const queues = getUserQueues(socket.characterId!)
+async function stopCurrentQueue(socket: AuthenticatedSocket) {
+  const queues = await getUserQueues(socket.characterId!)
   const queueId = `${socket.characterId}:queue`
   
   // 停止当前队列活动
@@ -364,23 +595,30 @@ function stopCurrentQueue(socket: AuthenticatedSocket) {
     activeQueues.delete(queueId)
   }
   
+  // 取消数据库中的当前任务
+  if (queues.current) {
+    await cancelQueueInDatabase(queues.current.id)
+  }
+  
   queues.current = null
   
   // 自动开始下一个队列
   if (queues.pending.length > 0) {
     const nextQueue = queues.pending.shift()
     queues.current = nextQueue
+    await saveQueueToDatabase(socket.characterId!, nextQueue)
     startQueueActivity(socket, nextQueue)
     socket.emit('queue_updated', queues.pending)
   }
 }
 
-function removeFromQueue(socket: AuthenticatedSocket, queueId: string) {
-  const queues = getUserQueues(socket.characterId!)
-  const index = queues.pending.findIndex(q => q.id === queueId)
+async function removeFromQueue(socket: AuthenticatedSocket, queueId: string) {
+  const queues = await getUserQueues(socket.characterId!)
+  const index = queues.pending.findIndex((q:QueueItem) => q.id === queueId)
   
   if (index !== -1) {
     queues.pending.splice(index, 1)
+    await cancelQueueInDatabase(queueId)
     socket.emit('queue_updated', queues.pending)
   }
 }
@@ -454,7 +692,7 @@ async function completeQueueActivity(socket: AuthenticatedSocket, queueData: any
     // 处理奖励（复用原有逻辑）
     await processActivityReward(socket, resource, queueData.activityType)
     
-    const queues = getUserQueues(socket.characterId!)
+    const queues = await getUserQueues(socket.characterId!)
     
     // 确保有正确的重复次数设置
     const currentRepeat = queueData.currentRepeat || 1
@@ -465,12 +703,26 @@ async function completeQueueActivity(socket: AuthenticatedSocket, queueData: any
       // 更新重复次数并继续
       queueData.currentRepeat = currentRepeat + 1
       
+      // 更新数据库中的任务进度
+      await saveQueueToDatabase(socket.characterId!, queueData)
+      
       // 延迟一小段时间再开始下一次，避免立即重复
       setTimeout(() => {
         startQueueActivity(socket, queueData)
       }, 100)
     } else {
-      // 队列完成
+      // 队列完成，标记数据库任务为完成
+      await prisma.offlineTask.updateMany({
+        where: { 
+          id: queueData.id,
+          status: 'active'
+        },
+        data: { 
+          status: 'completed',
+          completedAt: new Date()
+        }
+      })
+      
       queues.current = null
       socket.emit('queue_completed', {
         message: `队列完成: ${queueData.resourceName} x${totalRepeat}`
@@ -481,6 +733,9 @@ async function completeQueueActivity(socket: AuthenticatedSocket, queueData: any
         const nextQueue = queues.pending.shift()
         nextQueue.currentRepeat = 1
         queues.current = nextQueue
+        
+        // 持久化新的当前队列
+        await saveQueueToDatabase(socket.characterId!, nextQueue)
         
         // 延迟一小段时间再开始下一个队列
         setTimeout(() => {

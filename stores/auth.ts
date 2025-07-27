@@ -1,8 +1,9 @@
 import { defineStore } from 'pinia'
+import { useCookie } from 'nuxt/app'
 
 interface User {
   id: string
-  email: string
+  email: string | null
   username: string
 }
 
@@ -51,9 +52,15 @@ export const useAuthStore = defineStore('auth', {
         this.character = data.character
         this.isAuthenticated = true
 
-        // 保存到localStorage
+        // 保存到cookie
         if (process.client) {
-          localStorage.setItem('auth-token', data.token)
+          const authCookie = useCookie('auth-token', {
+            httpOnly: false,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict',
+            path: '/'
+          })
+          authCookie.value = data.token
         }
 
         return { success: true }
@@ -74,9 +81,15 @@ export const useAuthStore = defineStore('auth', {
         this.character = data.character
         this.isAuthenticated = true
 
-        // 保存到localStorage
+        // 保存到cookie
         if (process.client) {
-          localStorage.setItem('auth-token', data.token)
+          const authCookie = useCookie('auth-token', {
+            httpOnly: false,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict',
+            path: '/'
+          })
+          authCookie.value = data.token
         }
 
         return { success: true }
@@ -92,29 +105,45 @@ export const useAuthStore = defineStore('auth', {
       this.isAuthenticated = false
 
       if (process.client) {
-        localStorage.removeItem('auth-token')
+        const authCookie = useCookie('auth-token', {
+          httpOnly: false,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'strict',
+          path: '/'
+        })
+        authCookie.value = null
       }
 
       await navigateTo('/login')
     },
 
     async checkAuth() {
-      if (process.client) {
-        const token = localStorage.getItem('auth-token')
-        if (token) {
-          try {
-            const { data } = await $fetch('/api/auth/me', {
-              headers: {
-                Authorization: `Bearer ${token}`
-              }
-            })
+      const authCookie = useCookie('auth-token')
+      const token = authCookie.value
+      if (token) {
+        try {
+          this.token = token
+          const response = await $fetch('/api/auth/me', {
+            headers: {
+              Authorization: `Bearer ${token}`
+            }
+          })
 
-            this.token = token
-            this.user = data.user
-            this.character = data.character
-            this.isAuthenticated = true
-          } catch (error) {
-            this.logout()
+          // 确保正确解析API响应结构
+          this.user = response.data.user
+          this.character = response.data.character
+          this.isAuthenticated = true
+        } catch (error) {
+          console.error('Auth check failed:', error)
+          // 清除无效的token
+          this.user = null
+          this.character = null
+          this.token = null
+          this.isAuthenticated = false
+          
+          if (process.client) {
+            const authCookie = useCookie('auth-token')
+            authCookie.value = null
           }
         }
       }

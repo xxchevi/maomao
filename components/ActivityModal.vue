@@ -9,40 +9,37 @@
         </button>
       </div>
       
+      <!-- 加载状态 -->
+      <div v-if="loading" class="text-center py-8">
+        <div class="text-gray-500">加载中...</div>
+      </div>
+      
       <!-- 资源信息 -->
-      <div v-if="resource" class="mb-6">
+      <div v-else-if="resourceInfo" class="mb-6">
         <div class="text-sm text-gray-600 mb-2">
-          耗时: <span class="font-semibold text-blue-600">{{ resource.baseTime }}秒(基础24秒)</span>
+          耗时: <span class="font-semibold text-blue-600">{{ resourceInfo.resource.baseTime }}秒</span>
         </div>
         
         <div class="text-sm text-gray-600 mb-4">
           获得:
           <div class="ml-4 space-y-1">
-            <div class="flex items-center">
-              <span class="w-2 h-2 bg-blue-500 rounded-full mr-2"></span>
-              来源: 1 ~ 2 (81.6%)
-            </div>
-            <div class="flex items-center">
-              <span class="w-2 h-2 bg-red-500 rounded-full mr-2"></span>
-              毒菇: 1 ~ 2 (81.6%)
-            </div>
-            <div class="flex items-center">
-              <span class="w-2 h-2 bg-green-500 rounded-full mr-2"></span>
-              草药: 1 ~ 2 (81.6%)
-            </div>
-            <div class="flex items-center">
-              <span class="w-2 h-2 bg-yellow-500 rounded-full mr-2"></span>
-              竹子: 1 ~ 2 (81.6%)
-            </div>
-            <div class="flex items-center">
-              <span class="w-2 h-2 bg-purple-500 rounded-full mr-2"></span>
-              采集成就: 1 (1.02%)
+            <div 
+              v-for="drop in resourceInfo.drops" 
+              :key="drop.item.id"
+              class="flex items-center"
+            >
+              <span :class="`w-2 h-2 ${drop.color} rounded-full mr-2`"></span>
+              {{ drop.item.name }}: {{ drop.minQuantity }}{{ drop.maxQuantity > drop.minQuantity ? ` ~ ${drop.maxQuantity}` : '' }} ({{ (drop.dropRate * 100).toFixed(1) }}%)
             </div>
           </div>
         </div>
         
         <div class="text-sm text-gray-600 mb-4">
-          提升: <span class="text-yellow-600">🏆 种植: 1 经验</span>
+          提升: <span class="text-yellow-600">🏆 {{ resourceInfo.skillExp.type }}: {{ resourceInfo.skillExp.amount }} 经验</span>
+        </div>
+        
+        <div class="text-xs text-gray-500 mb-4">
+          当前技能等级: {{ resourceInfo.skillLevel }}
         </div>
       </div>
       
@@ -121,20 +118,42 @@ const props = defineProps({
 const emit = defineEmits(['close', 'addToQueue', 'startImmediately'])
 
 const repeatCount = ref(1)
+const loading = ref(false)
+const resourceInfo = ref(null)
 
 const estimatedTime = computed(() => {
-  if (!props.resource) return 0
-  return props.resource.baseTime * repeatCount.value
+  if (!resourceInfo.value) return 0
+  return resourceInfo.value.resource.baseTime * repeatCount.value
 })
+
+// 获取资源详细信息
+const fetchResourceInfo = async () => {
+  if (!props.resource || !props.activityType) return
+  
+  loading.value = true
+  try {
+    const { data } = await $fetch('/api/game/resource-info', {
+      query: {
+        resourceId: props.resource.id,
+        activityType: props.activityType
+      }
+    })
+    resourceInfo.value = data
+  } catch (error) {
+    console.error('Failed to fetch resource info:', error)
+  } finally {
+    loading.value = false
+  }
+}
 
 const closeModal = () => {
   emit('close')
 }
 
 const addTime = (timeStr) => {
-  if (!props.resource) return
+  if (!resourceInfo.value) return
   
-  const baseTime = props.resource.baseTime
+  const baseTime = resourceInfo.value.resource.baseTime
   let additionalCount = 0
   
   if (timeStr === '30m') {
@@ -168,6 +187,8 @@ const startImmediately = () => {
 watch(() => props.isOpen, (newVal) => {
   if (newVal) {
     repeatCount.value = 1
+    resourceInfo.value = null
+    fetchResourceInfo()
   }
 })
 </script>

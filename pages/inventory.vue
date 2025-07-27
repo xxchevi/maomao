@@ -63,38 +63,38 @@
           :key="inventoryItem.id"
           :class="[
             'inventory-slot relative group cursor-pointer',
-            `rarity-${inventoryItem.item.rarity}`
+            `rarity-${inventoryItem?.item?.rarity}`
           ]"
           @click="selectedItem = inventoryItem"
         >
           <!-- 物品图标 -->
           <div class="text-2xl">
-            {{ getItemIcon(inventoryItem.item.type) }}
+            {{ getItemIcon(inventoryItem?.item?.type) }}
           </div>
           
           <!-- 数量标识 -->
           <div 
-            v-if="inventoryItem.quantity > 1"
+            v-if="inventoryItem?.quantity > 1"
             class="absolute -top-1 -right-1 bg-blue-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center"
           >
-            {{ inventoryItem.quantity > 99 ? '99+' : inventoryItem.quantity }}
+            {{ inventoryItem?.quantity > 99 ? '99+' : inventoryItem?.quantity }}
           </div>
           
           <!-- 稀有度标识 -->
           <div 
-            v-if="inventoryItem.item.rarity !== 'common'"
+            v-if="inventoryItem?.item?.rarity !== 'common'"
             class="absolute -bottom-1 -left-1 w-3 h-3 rounded-full"
             :class="{
-              'bg-green-400': inventoryItem.item.rarity === 'uncommon',
-              'bg-blue-400': inventoryItem.item.rarity === 'rare',
-              'bg-purple-400': inventoryItem.item.rarity === 'epic',
-              'bg-yellow-400': inventoryItem.item.rarity === 'legendary'
+              'bg-green-400': inventoryItem?.item?.rarity === 'uncommon',
+              'bg-blue-400': inventoryItem?.item?.rarity === 'rare',
+              'bg-purple-400': inventoryItem?.item?.rarity === 'epic',
+              'bg-yellow-400': inventoryItem?.item?.rarity === 'legendary'
             }"
           ></div>
           
           <!-- 悬停提示 -->
           <div class="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-gray-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
-            {{ inventoryItem.item.name }}
+            {{ inventoryItem?.item?.name }}
           </div>
         </div>
       </div>
@@ -132,42 +132,42 @@
         
         <div class="space-y-4">
           <div class="flex items-center space-x-4">
-            <div :class="['inventory-slot', `rarity-${selectedItem.item.rarity}`]">
+            <div :class="['inventory-slot', `rarity-${selectedItem?.item?.rarity}`]">
               <div class="text-3xl">
-                {{ getItemIcon(selectedItem.item.type) }}
+                {{ getItemIcon(selectedItem?.item?.type) }}
               </div>
             </div>
             
             <div class="flex-1">
-              <h4 class="text-lg font-semibold">{{ selectedItem.item.name }}</h4>
-              <p class="text-sm text-gray-600 capitalize">{{ getRarityName(selectedItem.item.rarity) }}</p>
+              <h4 class="text-lg font-semibold">{{ selectedItem?.item?.name }}</h4>
+              <p class="text-sm text-gray-600 capitalize">{{ getRarityName(selectedItem?.item?.rarity) }}</p>
             </div>
           </div>
           
           <div class="space-y-2">
             <div class="flex justify-between">
               <span class="text-gray-600">类型:</span>
-              <span class="font-medium">{{ getTypeName(selectedItem.item.type) }}</span>
+              <span class="font-medium">{{ getTypeName(selectedItem?.item?.type) }}</span>
             </div>
             
             <div class="flex justify-between">
               <span class="text-gray-600">数量:</span>
-              <span class="font-medium">{{ selectedItem.quantity }}</span>
+              <span class="font-medium">{{ selectedItem?.quantity }}</span>
             </div>
             
             <div class="flex justify-between">
               <span class="text-gray-600">单价:</span>
-              <span class="font-medium text-yellow-600">{{ selectedItem.item.value }} 金币</span>
+              <span class="font-medium text-yellow-600">{{ selectedItem?.item?.value }} 金币</span>
             </div>
             
             <div class="flex justify-between">
               <span class="text-gray-600">总价值:</span>
-              <span class="font-medium text-yellow-600">{{ selectedItem.item.value * selectedItem.quantity }} 金币</span>
+              <span class="font-medium text-yellow-600">{{ (selectedItem?.item?.value || 0) * (selectedItem?.quantity || 0) }} 金币</span>
             </div>
           </div>
           
-          <div v-if="selectedItem.item.description" class="pt-4 border-t">
-            <p class="text-sm text-gray-600">{{ selectedItem.item.description }}</p>
+          <div v-if="selectedItem?.item?.description" class="pt-4 border-t">
+            <p class="text-sm text-gray-600">{{ selectedItem?.item?.description }}</p>
           </div>
         </div>
       </div>
@@ -206,12 +206,12 @@ const totalItems = computed(() => {
 })
 
 const totalValue = computed(() => {
-  return gameStore.inventory.reduce((sum, item) => sum + (item.item.value * item.quantity), 0)
+  return gameStore.inventory.reduce((sum, item) => sum + ((item?.item?.value || 0) * (item?.quantity || 0)), 0)
 })
 
 const rareItems = computed(() => {
   return gameStore.inventory.filter(item => 
-    ['rare', 'epic', 'legendary'].includes(item.item.rarity)
+    ['rare', 'epic', 'legendary'].includes(item?.item?.rarity)
   ).length
 })
 
@@ -255,7 +255,5 @@ useHead({
 })
 
 // 页面守卫
-definePageMeta({
-  middleware: 'auth'
-})
+definePageMeta({})
 </script>

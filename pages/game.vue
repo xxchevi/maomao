@@ -38,6 +38,19 @@
 
     <!-- 队列面板 -->
     <QueuePanel />
+    
+    <!-- 测试按钮 -->
+    <div class="game-card" v-if="authStore.isLoggedIn">
+      <h2 class="text-xl font-bold mb-4">测试功能</h2>
+      <div class="flex gap-4">
+        <button @click="createTestQueue" class="btn-primary">
+          创建测试队列
+        </button>
+        <button @click="restoreQueues" class="btn-secondary">
+          恢复队列状态
+        </button>
+      </div>
+    </div>
 
     <!-- 技能面板 -->
     <div class="game-card" v-if="authStore.isLoggedIn && authStore.character">
@@ -307,6 +320,21 @@ const getSkillProgress = (exp, level) => {
   const nextLevelExp = level * level * 100
   const progress = ((exp - currentLevelExp) / (nextLevelExp - currentLevelExp)) * 100
   return Math.max(0, Math.min(100, progress))
+}
+
+// 测试功能
+const createTestQueue = () => {
+  if (gameStore.socket) {
+    gameStore.socket.emit('test_create_queue')
+    console.log('发送创建测试队列请求')
+  }
+}
+
+const restoreQueues = () => {
+  if (gameStore.socket) {
+    gameStore.socket.emit('restore_queues')
+    console.log('发送恢复队列请求')
+  }
 }
 
 // 设置页面元数据

@@ -17,14 +17,14 @@
         <div class="space-y-2">
           <div class="flex justify-between items-center text-sm">
             <span>单次进度:</span>
-            <span class="font-semibold">{{ Math.floor(gameStore.currentQueue.progress) }}%</span>
+            <span class="font-semibold">{{ Math.floor(gameStore.currentQueue.progress || 0) }}%</span>
           </div>
           
           <!-- 流畅的进度条 -->
           <div class="relative h-3 bg-gray-200 rounded-full overflow-hidden">
             <div 
               class="absolute top-0 left-0 h-full bg-gradient-to-r from-blue-400 to-blue-600 rounded-full transition-all duration-100 ease-linear"
-              :style="{ width: gameStore.currentQueue.progress + '%' }"
+              :style="{ width: (gameStore.currentQueue.progress || 0) + '%' }"
             >
               <!-- 进度条光效 -->
               <div class="absolute top-0 left-0 w-full h-full bg-gradient-to-r from-transparent via-white to-transparent opacity-30 animate-pulse"></div>
@@ -32,8 +32,8 @@
           </div>
           
           <div class="flex justify-between items-center text-xs text-gray-500">
-            <span>剩余时间: {{ formatTime(gameStore.currentQueue.remainingTime) }}</span>
-            <span>总进度: {{ Math.floor(((gameStore.currentQueue.currentRepeat - 1 + gameStore.currentQueue.progress / 100) / gameStore.currentQueue.totalRepeat) * 100) }}%</span>
+            <span>剩余时间: {{ formatTime(gameStore.currentQueue.remainingTime || 0) }}</span>
+            <span>总进度: {{ Math.floor((((gameStore.currentQueue.currentRepeat || 1) - 1 + (gameStore.currentQueue.progress || 0) / 100) / (gameStore.currentQueue.totalRepeat || 1)) * 100) }}%</span>
           </div>
         </div>
         
@@ -54,7 +54,7 @@
         >
           <div class="flex-1">
             <div class="font-medium text-sm">{{ getActivityName(queue.activityType) }} - {{ queue.resourceName }}</div>
-            <div class="text-xs text-gray-600">执行 {{ queue.totalRepeat }} 次 | 预计 {{ formatTime(queue.estimatedTime) }}</div>
+            <div class="text-xs text-gray-600">执行 {{ queue.totalRepeat || 1 }} 次 | 预计 {{ formatTime(queue.estimatedTime || 0) }}</div>
           </div>
           
           <div class="flex items-center space-x-2">
@@ -95,15 +95,18 @@ const getActivityName = (type) => {
 }
 
 const formatTime = (seconds) => {
-  if (seconds < 60) {
-    return `${seconds}秒`
-  } else if (seconds < 3600) {
-    const minutes = Math.floor(seconds / 60)
-    const remainingSeconds = seconds % 60
+  // 确保seconds是一个有效的数字
+  const validSeconds = Number(seconds) || 0
+  
+  if (validSeconds < 60) {
+    return `${validSeconds}秒`
+  } else if (validSeconds < 3600) {
+    const minutes = Math.floor(validSeconds / 60)
+    const remainingSeconds = validSeconds % 60
     return `${minutes}分${remainingSeconds}秒`
   } else {
-    const hours = Math.floor(seconds / 3600)
-    const minutes = Math.floor((seconds % 3600) / 60)
+    const hours = Math.floor(validSeconds / 3600)
+    const minutes = Math.floor((validSeconds % 3600) / 60)
     return `${hours}小时${minutes}分钟`
   }
 }

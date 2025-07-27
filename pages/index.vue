@@ -154,6 +154,11 @@
 <script setup>
 const authStore = useAuthStore()
 
+// 如果已登录，直接跳转到游戏页面
+if (authStore.isLoggedIn) {
+  await navigateTo('/game')
+}
+
 // 设置页面元数据
 useHead({
   title: '猫猫挂机游戏 - 轻松的放置类游戏',

@@ -223,6 +223,13 @@ export default defineNitroPlugin(async (nitroApp) => {
         const totalRepeat = task.totalRepeat || 1
         const currentRepeat = task.currentRepeat || 1
         
+        // 计算实际进度
+        const createdAt = new Date(task.createdAt);
+        const elapsed = Math.max(0, Date.now() - createdAt.getTime());
+        const totalDuration = baseTime * 1000; // 转换为毫秒
+        const progress = Math.min(100, Math.round((elapsed / totalDuration) * 100));
+        const remainingTime = Math.max(0, Math.round((totalDuration - elapsed) / 1000));
+        
         return {
           id: task.id,
           activityType: task.type,
@@ -233,8 +240,8 @@ export default defineNitroPlugin(async (nitroApp) => {
           totalRepeat: totalRepeat,
           baseTime: baseTime,
           expReward: resource?.expReward || 10,
-          progress: 0, // 恢复时重置进度
-          remainingTime: baseTime, // 设置剩余时间为基础时间
+          progress: progress,
+          remainingTime: remainingTime,
           estimatedTime: baseTime * (totalRepeat - currentRepeat + 1), // 计算剩余预计时间
           createdAt: task.createdAt.toISOString()
         }

@@ -348,8 +348,11 @@ export const useGameStore = defineStore('game', {
     },
 
     startNextQueue() {
-      // 这个方法不需要手动调用，服务器端会自动处理队列切换
-      // 保留这个方法是为了兼容性，但实际逻辑由服务器端处理
+      // 请求服务器开始下一个队列
+      if (this.socket) {
+        console.log('[CLIENT] 请求服务器开始下一个队列');
+        this.socket.emit('start_next_queue');
+      }
     },
 
     // 兼容旧的方法

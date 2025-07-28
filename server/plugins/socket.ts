@@ -1146,6 +1146,11 @@ async function startQueueActivity(socket: AuthenticatedSocket, queueData: any) {
 
 async function completeQueueActivity(socket: AuthenticatedSocket, queueData: any, resource: any) {
   try {
+    // 更新任务状态为已完成
+    await prisma.offlineTask.update({
+      where: { id: queueData.id },
+      data: { status: 'completed' }
+    });
     const queueId = `${socket.characterId}:queue`
     const activity = activeQueues.get(queueId)
     

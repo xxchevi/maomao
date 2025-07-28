@@ -113,10 +113,6 @@ model OfflineTask {
   duration    Int       // 任务持续时间（秒）
   progress    Int       @default(0) // 当前进度
   
-  // 重复次数
-  totalRepeat   Int       @default(1) // 总重复次数
-  currentRepeat Int       @default(1) // 当前重复次数
-  
   // 奖励
   expReward   Int       @default(0)
   itemRewards String?   // JSON格式的物品奖励（存储为字符串）

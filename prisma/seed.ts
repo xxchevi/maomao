@@ -61,7 +61,7 @@ async function main() {
       area: 'mining',
       itemId: copperOre!.id,
       levelReq: 1,
-      baseTime: 30,
+      baseTime: 5,
       expReward: 15
     },
     {
@@ -70,7 +70,7 @@ async function main() {
       area: 'mining',
       itemId: copperOre!.id,
       levelReq: 5,
-      baseTime: 45,
+      baseTime: 10,
       expReward: 25
     },
     {
@@ -79,7 +79,7 @@ async function main() {
       area: 'mining',
       itemId: ironOre!.id,
       levelReq: 15,
-      baseTime: 60,
+      baseTime: 15,
       expReward: 40
     },
     {
@@ -88,7 +88,7 @@ async function main() {
       area: 'mining',
       itemId: silverOre!.id,
       levelReq: 30,
-      baseTime: 90,
+      baseTime: 20,
       expReward: 65
     },
     {
@@ -97,7 +97,7 @@ async function main() {
       area: 'mining',
       itemId: goldOre!.id,
       levelReq: 50,
-      baseTime: 120,
+      baseTime: 25,
       expReward: 100
     },
     
@@ -108,7 +108,7 @@ async function main() {
       area: 'gathering',
       itemId: wildGrass!.id,
       levelReq: 1,
-      baseTime: 25,
+      baseTime: 5,
       expReward: 12
     },
     {
@@ -117,7 +117,7 @@ async function main() {
       area: 'gathering',
       itemId: blueberry!.id,
       levelReq: 8,
-      baseTime: 40,
+      baseTime: 10,
       expReward: 22
     },
     {
@@ -126,7 +126,7 @@ async function main() {
       area: 'gathering',
       itemId: herb!.id,
       levelReq: 20,
-      baseTime: 55,
+      baseTime: 15,
       expReward: 38
     },
     {
@@ -135,7 +135,7 @@ async function main() {
       area: 'gathering',
       itemId: magicFlower!.id,
       levelReq: 40,
-      baseTime: 80,
+      baseTime: 20,
       expReward: 70
     },
     {
@@ -144,7 +144,7 @@ async function main() {
       area: 'gathering',
       itemId: herb!.id,
       levelReq: 60,
-      baseTime: 110,
+      baseTime: 25,
       expReward: 120
     },
     
@@ -155,7 +155,7 @@ async function main() {
       area: 'fishing',
       itemId: smallFish!.id,
       levelReq: 1,
-      baseTime: 35,
+      baseTime: 5,
       expReward: 18
     },
     {
@@ -164,7 +164,7 @@ async function main() {
       area: 'fishing',
       itemId: carp!.id,
       levelReq: 10,
-      baseTime: 50,
+      baseTime: 10,
       expReward: 28
     },
     {
@@ -173,7 +173,7 @@ async function main() {
       area: 'fishing',
       itemId: goldfish!.id,
       levelReq: 25,
-      baseTime: 70,
+      baseTime: 15,
       expReward: 45
     },
     {
@@ -182,7 +182,7 @@ async function main() {
       area: 'fishing',
       itemId: rainbowFish!.id,
       levelReq: 45,
-      baseTime: 95,
+      baseTime: 20,
       expReward: 80
     },
     {
@@ -191,7 +191,7 @@ async function main() {
       area: 'fishing',
       itemId: rainbowFish!.id,
       levelReq: 65,
-      baseTime: 130,
+      baseTime: 25,
       expReward: 140
     }
   ]

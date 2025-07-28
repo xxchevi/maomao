@@ -52,6 +52,7 @@ export const useGameStore = defineStore('game', {
     // 队列系统
     currentQueue: null as ActivityQueue | null,
     pendingQueues: [] as ActivityQueue[],
+    progressTimer: null as NodeJS.Timeout | null,
     
     // 保留兼容性
     currentActivity: null as string | null,
@@ -125,54 +126,78 @@ export const useGameStore = defineStore('game', {
           this.inventory = inventory
         })
 
-        // 队列相关事件
-        this.socket.on('queue_progress', (data) => {
-          console.log('[CLIENT] 收到queue_progress事件:', data)
-          if (this.currentQueue) {
-            this.currentQueue.progress = data.progress
-            this.currentQueue.remainingTime = data.remainingTime
-            this.currentQueue.currentRepeat = data.currentRepeat || 1
-            this.currentQueue.totalRepeat = data.totalRepeat || this.currentQueue.totalRepeat
-            
-            // 兼容旧的进度系统
-            this.activityProgress = data.progress
-          }
-        })
+        // 队列相关事件 - 移除queue_progress监听，改为本地计算
 
         this.socket.on('queue_completed', (data) => {
-          console.log('[CLIENT] 收到queue_completed事件:', data)
+          console.log('[CLIENT] [DEBUG] 收到queue_completed事件:', data)
+          console.log('[CLIENT] [DEBUG] 当前队列状态:', {
+            currentQueue: this.currentQueue,
+            currentActivity: this.currentActivity,
+            activityProgress: this.activityProgress,
+            pendingQueues: this.pendingQueues.length
+          })
           
           // 显示完成提示
            if (data.message) {
              // 在页面上显示提示信息
              this.addNotification(data.message, 'success')
-             console.log('[CLIENT] 显示队列完成提示:', data.message)
+             console.log('[CLIENT] [DEBUG] 显示队列完成提示:', data.message)
            }
           
           // 处理队列完成逻辑
-          console.log(`[CLIENT] 队列任务完成 - ${data.activityType}: ${data.resourceName}`)
+          console.log(`[CLIENT] [DEBUG] 队列任务完成 - ${data.activityType}: ${data.resourceName}`)
+          
+          // 停止本地进度计算
+          this.stopLocalProgressCalculation()
           
           this.currentQueue = null
           this.currentActivity = null
           this.activityProgress = 0
           this.activityTarget = null
           
+          console.log('[CLIENT] [DEBUG] 队列完成后状态重置完毕，准备开始下一个队列')
+          
           // 自动开始下一个队列
           this.startNextQueue()
         })
 
         this.socket.on('current_queue_updated', (currentQueue) => {
-          console.log('[CLIENT] 收到current_queue_updated事件，当前队列:', currentQueue)
+          console.log('[CLIENT] [DEBUG] 收到current_queue_updated事件，当前队列:', currentQueue)
           if (currentQueue) {
-            this.currentQueue = currentQueue
+            // 使用服务器提供的 startTime，如果没有则使用当前时间
+            const startTime = currentQueue.startTime || Date.now()
+            
+            console.log('[CLIENT] [DEBUG] 更新当前队列:', {
+              id: currentQueue.id,
+              activityType: currentQueue.activityType,
+              resourceName: currentQueue.resourceName,
+              currentRepeat: currentQueue.currentRepeat,
+              totalRepeat: currentQueue.totalRepeat,
+              serverStartTime: currentQueue.startTime,
+              useStartTime: startTime,
+              serverProgress: currentQueue.progress
+            })
+            
+            this.currentQueue = {
+              ...currentQueue,
+              startTime: startTime,
+              progress: 0 // 重置进度，让本地计算接管
+            }
             this.currentActivity = currentQueue.activityType
             this.activityTarget = this.resources.find(r => r.id === currentQueue.resourceId)
-            this.activityProgress = currentQueue.progress || 0
+            this.activityProgress = 0 // 重置进度
+            
+            // 启动本地进度计算
+            this.startLocalProgressCalculation()
           } else {
+            console.log('[CLIENT] [DEBUG] 清空当前队列')
             this.currentQueue = null
             this.currentActivity = null
             this.activityTarget = null
             this.activityProgress = 0
+            
+            // 停止进度计算
+            this.stopLocalProgressCalculation()
           }
         })
 
@@ -198,6 +223,76 @@ export const useGameStore = defineStore('game', {
         this.socket.disconnect()
         this.socket = null
         this.isConnected = false
+      }
+      this.stopLocalProgressCalculation()
+    },
+
+    // 本地进度计算方法
+    startLocalProgressCalculation() {
+      this.stopLocalProgressCalculation() // 先停止之前的计时器
+      
+      if (!this.currentQueue) {
+        console.log('[CLIENT] [DEBUG] 无当前队列，停止进度计算')
+        return
+      }
+      
+      console.log('[CLIENT] [DEBUG] 开始本地进度计算，当前队列:', {
+        id: this.currentQueue.id,
+        activityType: this.currentQueue.activityType,
+        resourceName: this.currentQueue.resourceName,
+        currentRepeat: this.currentQueue.currentRepeat,
+        totalRepeat: this.currentQueue.totalRepeat,
+        baseTime: this.currentQueue.baseTime,
+        startTime: this.currentQueue.startTime,
+        progress: this.currentQueue.progress
+      })
+      
+      this.progressTimer = setInterval(() => {
+        if (!this.currentQueue) {
+          console.log('[CLIENT] [DEBUG] 队列已清空，停止进度计算')
+          this.stopLocalProgressCalculation()
+          return
+        }
+        
+        const now = Date.now()
+        const startTime = this.currentQueue.startTime || now
+        const elapsed = now - startTime
+        const duration = this.currentQueue.baseTime * 1000 // 转换为毫秒
+        
+        const progress = Math.min((elapsed / duration) * 100, 100)
+        const remainingTime = Math.max(0, Math.ceil((duration - elapsed) / 1000))
+        
+        // 详细调试信息
+        if (progress >= 99) {
+          console.log('[CLIENT] [DEBUG] 进度接近或达到100%:', {
+            now,
+            startTime,
+            elapsed,
+            duration,
+            progress,
+            remainingTime,
+            currentRepeat: this.currentQueue.currentRepeat,
+            totalRepeat: this.currentQueue.totalRepeat,
+            queueId: this.currentQueue.id
+          })
+        }
+        
+        this.currentQueue.progress = progress
+        this.currentQueue.remainingTime = remainingTime
+        this.activityProgress = progress
+        
+        // 如果进度达到100%，等待服务器的queue_completed事件
+        if (progress >= 100) {
+          console.log('[CLIENT] [DEBUG] 进度达到100%，停止本地计算，等待服务器queue_completed事件')
+          this.stopLocalProgressCalculation()
+        }
+      }, 100)
+    },
+    
+    stopLocalProgressCalculation() {
+      if (this.progressTimer) {
+        clearInterval(this.progressTimer)
+        this.progressTimer = null
       }
     },
 
@@ -275,10 +370,19 @@ export const useGameStore = defineStore('game', {
       console.log('[CLIENT] 发送add_to_queue事件到服务器')
       this.socket.emit('add_to_queue', queue)
       
+      // 如果当前没有队列在执行，添加后可能会立即开始，启动进度计算
+      setTimeout(() => {
+        if (this.currentQueue && !this.progressTimer) {
+          this.startLocalProgressCalculation()
+        }
+      }, 100)
+      
       this.addNotification(`已添加到队列: ${resource.name} x${params.repeatCount}`, 'success')
     },
 
     async startImmediately(params: { activityType: string; resourceId: string; repeatCount: number }) {
+      console.log('[CLIENT] [DEBUG] 立即开始新队列:', params)
+      
       const resource = this.resources.find(r => r.id === params.resourceId)
       if (!resource) {
         this.addNotification('资源点不存在', 'error')
@@ -295,21 +399,20 @@ export const useGameStore = defineStore('game', {
         progress: 0,
         remainingTime: resource.baseTime,
         estimatedTime: resource.baseTime * params.repeatCount,
-        createdAt: Date.now()
+        createdAt: Date.now(),
+        baseTime: resource.baseTime
       }
 
-      // 如果有当前队列，将其移到待开始队列的第一位
-      if (this.currentQueue) {
-        this.pendingQueues.unshift(this.currentQueue)
-      }
-
-      this.currentQueue = queue
-      this.currentActivity = params.activityType
-      this.activityTarget = resource
-      this.activityProgress = 0
+      // 停止当前的本地进度计算
+      this.stopLocalProgressCalculation()
 
       if (this.socket) {
+        console.log('[CLIENT] [DEBUG] 发送 start_immediately 事件到服务器')
         this.socket.emit('start_immediately', queue)
+      } else {
+        console.error('[CLIENT] Socket未连接，无法立即开始队列')
+        this.addNotification('网络连接错误', 'error')
+        return
       }
       
       this.addNotification(`立即开始: ${resource.name} x${params.repeatCount}`, 'success')
@@ -348,10 +451,19 @@ export const useGameStore = defineStore('game', {
     },
 
     startNextQueue() {
+      console.log('[CLIENT] [DEBUG] startNextQueue 被调用');
+      console.log('[CLIENT] [DEBUG] 当前状态:', {
+        currentQueue: this.currentQueue,
+        pendingQueues: this.pendingQueues.length,
+        socketConnected: !!this.socket
+      });
+      
       // 请求服务器开始下一个队列
       if (this.socket) {
-        console.log('[CLIENT] 请求服务器开始下一个队列');
+        console.log('[CLIENT] [DEBUG] 向服务器发送 start_next_queue 事件');
         this.socket.emit('start_next_queue');
+      } else {
+        console.error('[CLIENT] [DEBUG] Socket 未连接，无法请求下一个队列');
       }
     },
 

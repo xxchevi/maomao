@@ -267,16 +267,14 @@ export default defineNitroPlugin(async (nitroApp) => {
               
               if (resource) {
                 console.log(`[SERVER] [DEBUG] 找到采集资源:`, resource.name, resource.id)
-                // 创建一个短时间测试队列（只有2次重复，每次3秒）
+                // 创建一个短时间测试队列（3秒）
                 const testQueue = {
                   id: `short_test_${Date.now()}`,
                   characterId: socket.characterId!,
                   type: 'gathering', // 修改为gathering类型
                   targetId: resource.id,
-                  duration: 3000, // 3秒
+                  duration: 3, // 3秒（注意：这里存储的是秒，不是毫秒）
                   progress: 0,
-                  totalRepeat: 2, // 只重复2次
-                  currentRepeat: 1,
                   expReward: resource.expReward,
                   startedAt: new Date(),
                   status: 'active'
@@ -295,13 +293,13 @@ export default defineNitroPlugin(async (nitroApp) => {
                   activityType: 'gathering', // 确保与资源类型匹配
                   resourceId: testQueue.targetId,
                   resourceName: resource.name,
-                  totalRepeat: testQueue.totalRepeat,
-                  currentRepeat: testQueue.currentRepeat,
+                  totalRepeat: 1, // 默认重复1次
+                  currentRepeat: 1,
                   baseTime: 3, // 3秒（注意：startQueueActivity会乘以1000转换为毫秒）
                   expReward: resource.expReward,
                   progress: 0,
                   remainingTime: 3,
-                  estimatedTime: 6,
+                  estimatedTime: 3,
                   createdAt: testQueue.startedAt.toISOString(),
                   startTime: Date.now()
                 }
@@ -457,6 +455,12 @@ const activeActivities = new Map()
 // 队列管理
 const userQueues = new Map() // 存储用户队列数据
 const activeQueues = new Map() // 存储正在执行的队列
+
+// 内存中存储队列的重复次数信息
+const queueRepeatInfo = new Map<string, {
+  totalRepeat: number
+  currentRepeat: number
+}>()
 
 function startActivity(socket: AuthenticatedSocket, resource: any, type: string) {
   // 停止之前的活动
@@ -764,13 +768,17 @@ async function saveQueueToDatabase(characterId: string, queueData: any) {
       return
     }
     
+    // 保存重复次数信息到内存
+    queueRepeatInfo.set(queueData.id, {
+      totalRepeat: queueData.totalRepeat || 1,
+      currentRepeat: queueData.currentRepeat || 1
+    })
+    
     const taskData = {
       type: queueData.activityType,
       targetId: queueData.resourceId,
       duration: resource.baseTime * (queueData.totalRepeat || 1),
       progress: queueData.progress || 0,
-      totalRepeat: queueData.totalRepeat || 1,
-      currentRepeat: queueData.currentRepeat || 1,
       expReward: resource.expReward * (queueData.totalRepeat || 1),
       startedAt: new Date(queueData.createdAt || Date.now()),
       status: 'active'
@@ -875,20 +883,23 @@ async function addToQueue(socket: AuthenticatedSocket, queueData: any) {
     const pending = offlineTasks.map(task => {
       const resource = resourceMap.get(task.targetId || '')
       const baseTime = resource?.baseTime || 10
-      const totalRepeat = task.totalRepeat || 1
+      
+      // 从内存中获取重复次数信息
+      const repeatInfo = queueRepeatInfo.get(task.id) || { totalRepeat: 1, currentRepeat: 1 }
+      
       return {
         id: task.id,
         activityType: task.type,
         resourceId: task.targetId,
         resourceName: resource?.name || '未知资源',
-        repeatCount: totalRepeat,
-        currentRepeat: task.currentRepeat || 1,
-        totalRepeat: totalRepeat,
+        repeatCount: repeatInfo.totalRepeat,
+        currentRepeat: repeatInfo.currentRepeat,
+        totalRepeat: repeatInfo.totalRepeat,
         baseTime: baseTime,
         expReward: resource?.expReward || 10,
         progress: 0,
         remainingTime: baseTime,
-        estimatedTime: baseTime * totalRepeat,
+        estimatedTime: baseTime * repeatInfo.totalRepeat,
         createdAt: task.createdAt.toISOString()
       }
     })
@@ -1368,7 +1379,9 @@ async function startQueueActivity(socket: AuthenticatedSocket, queueData: any) {
       activeQueues.delete(queueId)
     }
     
-    const duration = resource.baseTime * 1000 // 转换为毫秒
+    // 使用队列数据中的baseTime，如果没有则使用资源的baseTime
+    const baseTime = queueData.baseTime || resource.baseTime
+    const duration = baseTime * 1000 // 转换为毫秒
     const startTime = Date.now()
     
     // 移除queue_progress事件发送，改为客户端本地计算
@@ -1422,11 +1435,17 @@ async function completeQueueActivity(socket: AuthenticatedSocket, queueData: any
       // 更新重复次数并继续
       queueData.currentRepeat = currentRepeat + 1
       
-      // 更新数据库中的任务进度，但保持active状态
+      // 更新内存中的重复次数信息
+      const repeatInfo = queueRepeatInfo.get(queueData.id)
+      if (repeatInfo) {
+        repeatInfo.currentRepeat = queueData.currentRepeat
+        queueRepeatInfo.set(queueData.id, repeatInfo)
+      }
+      
+      // 数据库中不需要存储重复次数，只保持active状态
       await prisma.offlineTask.update({
         where: { id: queueData.id },
         data: { 
-          currentRepeat: queueData.currentRepeat,
           status: 'active' // 确保状态仍为active
         }
       })
@@ -1452,6 +1471,9 @@ async function completeQueueActivity(socket: AuthenticatedSocket, queueData: any
       }, 100)
     } else {
       console.log(`[SERVER] 队列任务完全完成 - ID: ${queueData.id}, 活动: ${queueData.activityType}`)
+      
+      // 清理内存中的重复次数信息
+      queueRepeatInfo.delete(queueData.id)
       
       // 队列完成，标记数据库任务为完成
       await prisma.offlineTask.update({
@@ -1496,22 +1518,23 @@ async function completeQueueActivity(socket: AuthenticatedSocket, queueData: any
       const pending = offlineTasks.map(task => {
         const resource = resourceMap.get(task.targetId || '')
         const baseTime = resource?.baseTime || 10
-        const totalRepeat = task.totalRepeat || 1
-        const currentRepeat = task.currentRepeat || 1
+        
+        // 从内存中获取重复次数信息
+        const repeatInfo = queueRepeatInfo.get(task.id) || { totalRepeat: 1, currentRepeat: 1 }
         
         return {
           id: task.id,
           activityType: task.type,
           resourceId: task.targetId,
           resourceName: resource?.name || '未知资源',
-          repeatCount: totalRepeat,
-          currentRepeat: currentRepeat,
-          totalRepeat: totalRepeat,
+          repeatCount: repeatInfo.totalRepeat,
+          currentRepeat: repeatInfo.currentRepeat,
+          totalRepeat: repeatInfo.totalRepeat,
           baseTime: baseTime,
           expReward: resource?.expReward || 10,
           progress: 0, // 新队列重置进度
           remainingTime: baseTime, // 设置剩余时间
-          estimatedTime: baseTime * totalRepeat, // 计算预计总时间
+          estimatedTime: baseTime * repeatInfo.totalRepeat, // 计算预计总时间
           createdAt: task.createdAt.toISOString()
         }
       })

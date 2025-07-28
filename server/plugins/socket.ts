@@ -456,11 +456,11 @@ const activeActivities = new Map()
 const userQueues = new Map() // 存储用户队列数据
 const activeQueues = new Map() // 存储正在执行的队列
 
-// 内存中存储队列的重复次数信息
-const queueRepeatInfo = new Map<string, {
-  totalRepeat: number
-  currentRepeat: number
-}>()
+// 移除内存存储，现在直接使用数据库字段
+// const queueRepeatInfo = new Map<string, {
+//   totalRepeat: number
+//   currentRepeat: number
+// }>()
 
 function startActivity(socket: AuthenticatedSocket, resource: any, type: string) {
   // 停止之前的活动
@@ -671,8 +671,8 @@ async function restoreOfflineQueues(characterId: string) {
             activityType: task.type,
             resourceId: resource.id,
             resourceName: resource.name,
-            totalRepeat: 1,
-            currentRepeat: 1,
+            totalRepeat: task.totalRepeat || 1,
+            currentRepeat: task.currentRepeat || 1,
             progress: Math.min((taskElapsed / taskDuration) * 100, 100),
             remainingTime: Math.max(0, Math.ceil((taskDuration - taskElapsed) / 1000)),
             estimatedTime: resource.baseTime,
@@ -768,12 +768,6 @@ async function saveQueueToDatabase(characterId: string, queueData: any) {
       return
     }
     
-    // 保存重复次数信息到内存
-    queueRepeatInfo.set(queueData.id, {
-      totalRepeat: queueData.totalRepeat || 1,
-      currentRepeat: queueData.currentRepeat || 1
-    })
-    
     const taskData = {
       type: queueData.activityType,
       targetId: queueData.resourceId,
@@ -781,7 +775,9 @@ async function saveQueueToDatabase(characterId: string, queueData: any) {
       progress: queueData.progress || 0,
       expReward: resource.expReward * (queueData.totalRepeat || 1),
       startedAt: new Date(queueData.createdAt || Date.now()),
-      status: 'active'
+      status: 'active',
+      totalRepeat: queueData.totalRepeat || 1,
+      currentRepeat: queueData.currentRepeat || 1
     }
     
     console.log(`[SERVER] 准备创建/更新离线任务:`, taskData)
@@ -884,22 +880,23 @@ async function addToQueue(socket: AuthenticatedSocket, queueData: any) {
       const resource = resourceMap.get(task.targetId || '')
       const baseTime = resource?.baseTime || 10
       
-      // 从内存中获取重复次数信息
-      const repeatInfo = queueRepeatInfo.get(task.id) || { totalRepeat: 1, currentRepeat: 1 }
+      // 从数据库获取重复次数信息
+      const totalRepeat = task.totalRepeat || 1
+      const currentRepeat = task.currentRepeat || 1
       
       return {
         id: task.id,
         activityType: task.type,
         resourceId: task.targetId,
         resourceName: resource?.name || '未知资源',
-        repeatCount: repeatInfo.totalRepeat,
-        currentRepeat: repeatInfo.currentRepeat,
-        totalRepeat: repeatInfo.totalRepeat,
+        repeatCount: totalRepeat,
+        currentRepeat: currentRepeat,
+        totalRepeat: totalRepeat,
         baseTime: baseTime,
         expReward: resource?.expReward || 10,
         progress: 0,
         remainingTime: baseTime,
-        estimatedTime: baseTime * repeatInfo.totalRepeat,
+        estimatedTime: baseTime * totalRepeat,
         createdAt: task.createdAt.toISOString()
       }
     })
@@ -1435,17 +1432,11 @@ async function completeQueueActivity(socket: AuthenticatedSocket, queueData: any
       // 更新重复次数并继续
       queueData.currentRepeat = currentRepeat + 1
       
-      // 更新内存中的重复次数信息
-      const repeatInfo = queueRepeatInfo.get(queueData.id)
-      if (repeatInfo) {
-        repeatInfo.currentRepeat = queueData.currentRepeat
-        queueRepeatInfo.set(queueData.id, repeatInfo)
-      }
-      
-      // 数据库中不需要存储重复次数，只保持active状态
+      // 更新数据库中的重复次数信息
       await prisma.offlineTask.update({
         where: { id: queueData.id },
         data: { 
+          currentRepeat: queueData.currentRepeat,
           status: 'active' // 确保状态仍为active
         }
       })
@@ -1472,8 +1463,7 @@ async function completeQueueActivity(socket: AuthenticatedSocket, queueData: any
     } else {
       console.log(`[SERVER] 队列任务完全完成 - ID: ${queueData.id}, 活动: ${queueData.activityType}`)
       
-      // 清理内存中的重复次数信息
-      queueRepeatInfo.delete(queueData.id)
+      // 队列完全完成，不需要清理内存（现在使用数据库存储）
       
       // 队列完成，标记数据库任务为完成
       await prisma.offlineTask.update({
@@ -1519,22 +1509,23 @@ async function completeQueueActivity(socket: AuthenticatedSocket, queueData: any
         const resource = resourceMap.get(task.targetId || '')
         const baseTime = resource?.baseTime || 10
         
-        // 从内存中获取重复次数信息
-        const repeatInfo = queueRepeatInfo.get(task.id) || { totalRepeat: 1, currentRepeat: 1 }
+        // 从数据库获取重复次数信息
+        const totalRepeat = task.totalRepeat || 1
+        const currentRepeat = task.currentRepeat || 1
         
         return {
           id: task.id,
           activityType: task.type,
           resourceId: task.targetId,
           resourceName: resource?.name || '未知资源',
-          repeatCount: repeatInfo.totalRepeat,
-          currentRepeat: repeatInfo.currentRepeat,
-          totalRepeat: repeatInfo.totalRepeat,
+          repeatCount: totalRepeat,
+          currentRepeat: currentRepeat,
+          totalRepeat: totalRepeat,
           baseTime: baseTime,
           expReward: resource?.expReward || 10,
           progress: 0, // 新队列重置进度
           remainingTime: baseTime, // 设置剩余时间
-          estimatedTime: baseTime * repeatInfo.totalRepeat, // 计算预计总时间
+          estimatedTime: baseTime * totalRepeat, // 计算预计总时间
           createdAt: task.createdAt.toISOString()
         }
       })

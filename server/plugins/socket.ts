@@ -61,12 +61,23 @@ export default defineNitroPlugin(async (nitroApp) => {
           }
         })
 
+        // 启动离线任务处理器
+        startOfflineTaskProcessor()
+        
         // 连接处理
         io.on('connection', (socket: AuthenticatedSocket) => {
           console.log(`User ${socket.userId} connected`)
 
           // 加入用户房间
           socket.join(`user:${socket.userId}`)
+          
+          // 更新角色在线状态
+          if (socket.characterId) {
+            prisma.character.update({
+              where: { id: socket.characterId },
+              data: { lastOnline: new Date() }
+            }).catch(console.error)
+          }
 
           // 处理开始活动
           socket.on('start_activity', async (data) => {
@@ -135,6 +146,37 @@ export default defineNitroPlugin(async (nitroApp) => {
           socket.on('start_next_queue', async () => {
             console.log(`[SERVER] 用户 ${socket.characterId} 请求开始下一个队列`)
             await startNextQueueFromClient(socket)
+          })
+
+          // 清理所有队列
+          socket.on('clear_all_queues', async () => {
+            console.log(`[SERVER] 用户 ${socket.characterId} 请求清理所有队列`)
+            try {
+              // 停止当前队列活动
+              const queueId = `${socket.characterId}:queue`
+              const activity = activeQueues.get(queueId)
+              if (activity) {
+                clearInterval(activity.interval)
+                activeQueues.delete(queueId)
+                console.log(`[SERVER] 停止当前队列活动: ${activity.queueData?.id}`)
+              }
+              
+              // 删除该用户的所有离线任务
+              const deletedTasks = await prisma.offlineTask.deleteMany({
+                where: { characterId: socket.characterId! }
+              })
+              
+              console.log(`[SERVER] 清理了 ${deletedTasks.count} 个离线任务`)
+              
+              // 发送清空的队列状态
+              socket.emit('current_queue_updated', null)
+              socket.emit('queue_updated', [])
+              
+              console.log(`[SERVER] 所有队列已清理完成`)
+            } catch (error) {
+              console.error('[SERVER] 清理队列失败:', error)
+              socket.emit('error', { message: '清理队列失败' })
+            }
           })
 
           // 重置游戏数据
@@ -320,18 +362,6 @@ export default defineNitroPlugin(async (nitroApp) => {
   socket.on('restore_queues', async () => {
     console.log(`[SERVER] 用户 ${socket.characterId} 请求恢复队列状态`)
     try {
-      // 先查询所有该用户的离线任务
-      const allTasks = await prisma.offlineTask.findMany({
-        where: {
-          characterId: socket.characterId!
-        },
-        orderBy: {
-          createdAt: 'asc'
-        }
-      })
-      
-      console.log(`[SERVER] 数据库中该用户所有离线任务:`, allTasks.map(t => ({ id: t.id, status: t.status, type: t.type, totalRepeat: t.totalRepeat, currentRepeat: t.currentRepeat })))
-      
       // 直接从数据库获取离线任务
       const offlineTasks = await prisma.offlineTask.findMany({
         where: {
@@ -345,8 +375,39 @@ export default defineNitroPlugin(async (nitroApp) => {
       
       console.log(`[SERVER] 从数据库获取到 ${offlineTasks.length} 个活跃的离线任务`)
       
+      // 检查并处理已完成的任务
+      const tasksToProcess = []
+      for (const task of offlineTasks) {
+        const resource = await prisma.gameResource.findUnique({
+          where: { id: task.targetId || '' }
+        })
+        
+        if (!resource) continue
+        
+        const baseTime = resource.baseTime
+        const taskStartTime = new Date(task.startedAt).getTime()
+        const currentTime = Date.now()
+        const elapsedTime = currentTime - taskStartTime
+        const taskDuration = baseTime * 1000 // 转换为毫秒
+        
+        // 计算当前重复的进度
+        const currentRepeat = task.currentRepeat || 1
+        const totalRepeat = task.totalRepeat || 1
+        
+        // 计算当前重复任务的已用时间
+        const currentRepeatElapsed = elapsedTime - (currentRepeat - 1) * taskDuration
+        const progress = Math.min((currentRepeatElapsed / taskDuration) * 100, 100)
+        
+        console.log(`[SERVER] 任务 ${task.id} 检查: 当前重复 ${currentRepeat}/${totalRepeat}, 进度 ${progress.toFixed(1)}%`)
+        tasksToProcess.push({
+          ...task,
+          progress: progress,
+          remainingTime: Math.max(0, Math.ceil((taskDuration - currentRepeatElapsed) / 1000))
+        })
+      }
+      
       // 获取资源信息
-      const resourceIds = offlineTasks.map(task => task.targetId).filter(Boolean)
+      const resourceIds = tasksToProcess.map(task => task.targetId).filter(Boolean)
       const resources = await prisma.gameResource.findMany({
         where: {
           id: { in: resourceIds }
@@ -356,7 +417,7 @@ export default defineNitroPlugin(async (nitroApp) => {
       const resourceMap = new Map(resources.map(r => [r.id, r]))
       
       // 转换为队列格式
-      const pending = offlineTasks.map(task => {
+      const pending = tasksToProcess.map(task => {
         const resource = resourceMap.get(task.targetId || '')
         const baseTime = resource?.baseTime || 10
         const totalRepeat = task.totalRepeat || 1
@@ -372,16 +433,13 @@ export default defineNitroPlugin(async (nitroApp) => {
           totalRepeat: totalRepeat,
           baseTime: baseTime,
           expReward: resource?.expReward || 10,
-          progress: 0, // 重置进度，让客户端本地计算
-          remainingTime: baseTime, // 设置剩余时间
+          progress: task.progress || 0, // 使用计算出的实际进度
+          remainingTime: task.remainingTime || baseTime, // 使用计算出的剩余时间
           estimatedTime: baseTime * (totalRepeat - currentRepeat + 1), // 计算剩余预计时间
           createdAt: task.createdAt.toISOString()
           // 不设置 startTime，只有当前执行的队列才需要 startTime
         }
       })
-      
-      console.log(`[SERVER] 转换后的队列数据:`, pending)
-      
       // 检查是否有正在执行的队列
       const queueId = `${socket.characterId}:queue`
       const currentActivity = activeQueues.get(queueId)
@@ -392,42 +450,78 @@ export default defineNitroPlugin(async (nitroApp) => {
         const pendingQueues = pending.filter(q => q.id !== currentActivity.queueData.id)
         
         if (currentQueue) {
-          // 设置startTime以便客户端能够启动本地进度计算
-          const queueWithStartTime = {
+          // 使用服务器端活动的实际开始时间，不重新计算
+          const queueWithServerTime = {
             ...currentQueue,
-            startTime: currentActivity.startTime || Date.now()
+            startTime: currentActivity.startTime || Date.now(),
+            // 保持服务器端的实际进度状态
+            preserveProgress: true
           }
-          socket.emit('current_queue_updated', queueWithStartTime)
-          console.log(`[SERVER] 发送current_queue_updated事件:`, queueWithStartTime)
+          
+          // 不重新启动队列活动，保持现有的服务器端状态
+          console.log(`[SERVER] 恢复现有队列状态(不重启):`, queueWithServerTime)
+          
+          socket.emit('current_queue_updated', queueWithServerTime)
+          console.log(`[SERVER] 发送current_queue_updated事件:`, queueWithServerTime)
+        } else {
+          // 当前活动的队列在数据库中不存在，可能已被删除
+          console.log(`[SERVER] 当前活动队列在数据库中不存在，停止活动`)
+          clearInterval(currentActivity.interval)
+          activeQueues.delete(queueId)
+          
+          if (pending.length > 0) {
+            // 开始第一个待处理队列
+            const firstQueue = pending[0]
+            const progressRatio = firstQueue.progress / 100
+            const elapsedTime = progressRatio * firstQueue.baseTime * 1000
+            const correctStartTime = Date.now() - elapsedTime
+            
+            const queueWithStartTime = {
+              ...firstQueue,
+              startTime: correctStartTime
+            }
+            
+            startQueueActivity(socket, queueWithStartTime)
+            socket.emit('current_queue_updated', queueWithStartTime)
+            socket.emit('queue_updated', pending.slice(1))
+            console.log(`[SERVER] 开始新的队列任务:`, queueWithStartTime)
+          } else {
+            socket.emit('current_queue_updated', null)
+            socket.emit('queue_updated', [])
+          }
+          return
         }
         
         socket.emit('queue_updated', pendingQueues)
         console.log(`[SERVER] 发送queue_updated事件，待处理队列数量: ${pendingQueues.length}`)
       } else {
         // 没有正在执行的队列
-        socket.emit('current_queue_updated', null)
-        
         if (pending.length > 0) {
           console.log(`[SERVER] 开始执行第一个队列任务:`, pending[0])
           
           // 确保队列数据包含正确的进度信息
-          const firstQueue = {
-            ...pending[0],
-            progress: 0, // 重新开始时进度为0
-            remainingTime: pending[0].baseTime, // 剩余时间为基础时间
-            startTime: Date.now() // 只有当前执行的队列才设置 startTime
+          const firstQueue = pending[0]
+          // 根据当前进度计算正确的startTime
+          const progressRatio = firstQueue.progress / 100
+          const elapsedTime = progressRatio * firstQueue.baseTime * 1000
+          const correctStartTime = Date.now() - elapsedTime
+          
+          const queueWithStartTime = {
+            ...firstQueue,
+            startTime: correctStartTime // 设置正确的开始时间以匹配当前进度
           }
           
-          startQueueActivity(socket, firstQueue)
+          startQueueActivity(socket, queueWithStartTime)
           
           // 第一个队列开始执行，其余为待处理队列
-          socket.emit('current_queue_updated', firstQueue)
+          socket.emit('current_queue_updated', queueWithStartTime)
           socket.emit('queue_updated', pending.slice(1))
-          console.log(`[SERVER] 发送current_queue_updated事件:`, firstQueue)
+          console.log(`[SERVER] 发送current_queue_updated事件:`, queueWithStartTime)
           console.log(`[SERVER] 发送queue_updated事件，待处理队列数量: ${pending.slice(1).length}`)
         } else {
-          socket.emit('queue_updated', [])
-          console.log(`[SERVER] 没有待处理的队列任务`)
+            socket.emit('current_queue_updated', null)
+            socket.emit('queue_updated', [])
+            console.log(`[SERVER] 没有队列可执行`)
         }
       }
     } catch (error) {
@@ -437,9 +531,23 @@ export default defineNitroPlugin(async (nitroApp) => {
   })
 
           // 断开连接
-          socket.on('disconnect', () => {
+          socket.on('disconnect', async () => {
             console.log(`User ${socket.userId} disconnected`)
             stopActivity(socket)
+            
+            // 更新角色最后在线时间
+            if (socket.characterId) {
+              try {
+                await prisma.character.update({
+                  where: { id: socket.characterId },
+                  data: { lastOnline: new Date() }
+                })
+                console.log(`[SERVER] 更新角色 ${socket.characterId} 最后在线时间`)
+              } catch (error) {
+                console.error('[SERVER] 更新最后在线时间失败:', error)
+              }
+            }
+            
             // 不要清理队列状态，让队列在后台继续运行
             // 这样用户重新连接时可以正确恢复队列状态
             // stopCurrentQueue(socket)
@@ -452,9 +560,154 @@ export default defineNitroPlugin(async (nitroApp) => {
 
 // 活动管理
 const activeActivities = new Map()
-// 队列管理
+// 存储用户队列数据
 const userQueues = new Map() // 存储用户队列数据
 const activeQueues = new Map() // 存储正在执行的队列
+
+// 离线任务处理器
+let offlineTaskProcessor: NodeJS.Timeout | null = null
+
+// 启动离线任务处理器
+function startOfflineTaskProcessor() {
+  if (offlineTaskProcessor) {
+    clearInterval(offlineTaskProcessor)
+  }
+  
+  offlineTaskProcessor = setInterval(async () => {
+    try {
+      await processOfflineTasks()
+    } catch (error) {
+      console.error('[OFFLINE_PROCESSOR] 处理离线任务时发生错误:', error)
+    }
+  }, 5000) // 每5秒检查一次离线任务
+  
+  console.log('[OFFLINE_PROCESSOR] 离线任务处理器已启动')
+}
+
+// 处理所有离线任务
+async function processOfflineTasks() {
+  try {
+    const activeTasks = await prisma.offlineTask.findMany({
+      where: {
+        status: 'active'
+      },
+      include: {
+        character: true
+      }
+    })
+    
+    for (const task of activeTasks) {
+      await processOfflineTask(task)
+    }
+  } catch (error) {
+    console.error('[OFFLINE_PROCESSOR] 获取离线任务失败:', error)
+  }
+}
+
+// 处理单个离线任务
+async function processOfflineTask(task: any) {
+  try {
+    const resource = await prisma.gameResource.findUnique({
+      where: { id: task.targetId }
+    })
+    
+    if (!resource) {
+      console.log(`[OFFLINE_PROCESSOR] 资源不存在，取消任务: ${task.id}`)
+      await prisma.offlineTask.update({
+        where: { id: task.id },
+        data: { status: 'cancelled' }
+      })
+      return
+    }
+    
+    const baseTime = resource.baseTime
+    const taskStartTime = new Date(task.startedAt).getTime()
+    const currentTime = Date.now()
+    const elapsedTime = currentTime - taskStartTime
+    const taskDuration = baseTime * 1000 // 转换为毫秒
+    
+    const currentRepeat = task.currentRepeat || 1
+    const totalRepeat = task.totalRepeat || 1
+    
+    // 计算当前重复任务的已用时间
+    const currentRepeatElapsed = elapsedTime - (currentRepeat - 1) * taskDuration
+    
+    if (currentRepeatElapsed >= taskDuration) {
+      // 当前重复完成
+      console.log(`[OFFLINE_PROCESSOR] 任务 ${task.id} 第${currentRepeat}次重复完成`)
+      
+      // 处理奖励但不发送通知（离线状态）
+      await processOfflineTaskReward(task, resource)
+      
+      if (currentRepeat >= totalRepeat) {
+        // 所有重复完成，标记任务为完成
+        await prisma.offlineTask.update({
+          where: { id: task.id },
+          data: { 
+            status: 'completed',
+            completedAt: new Date(),
+            currentRepeat: totalRepeat
+          }
+        })
+        console.log(`[OFFLINE_PROCESSOR] 任务 ${task.id} 全部完成`)
+      } else {
+        // 还有重复未完成，更新当前重复次数
+        await prisma.offlineTask.update({
+          where: { id: task.id },
+          data: { 
+            currentRepeat: currentRepeat + 1,
+            lastProcessedRepeat: currentRepeat // 记录已处理的重复次数
+          }
+        })
+        console.log(`[OFFLINE_PROCESSOR] 任务 ${task.id} 进入第${currentRepeat + 1}次重复`)
+      }
+    }
+  } catch (error) {
+    console.error(`[OFFLINE_PROCESSOR] 处理任务 ${task.id} 失败:`, error)
+  }
+}
+
+// 处理离线任务奖励（不发送Socket通知）
+async function processOfflineTaskReward(task: any, resource: any) {
+  try {
+    const character = await prisma.character.findUnique({
+      where: { id: task.characterId }
+    })
+    
+    if (!character) return
+    
+    const skillField = getSkillField(task.type)
+    const expField = getExpField(task.type)
+    
+    if (skillField && expField) {
+      const expReward = resource.expReward || 10
+      const newExp = character[expField] + expReward
+      const newLevel = calculateLevel(newExp)
+      
+      await prisma.character.update({
+        where: { id: task.characterId },
+        data: {
+          [expField]: newExp,
+          [skillField]: newLevel
+        }
+      })
+      
+      console.log(`[OFFLINE_PROCESSOR] 角色 ${task.characterId} 获得 ${expReward} ${task.type} 经验`)
+    }
+    
+    // 处理物品掉落
+    const skillLevel = getSkillLevel(character, task.type)
+    const itemDrops = await calculateItemDrops(task.type, skillLevel, resource)
+    
+    for (const drop of itemDrops) {
+      await addItemToInventory(task.characterId, drop.itemId, drop.quantity)
+      console.log(`[OFFLINE_PROCESSOR] 角色 ${task.characterId} 获得物品 ${drop.itemId} x${drop.quantity}`)
+    }
+    
+  } catch (error) {
+    console.error('[OFFLINE_PROCESSOR] 处理离线任务奖励失败:', error)
+  }
+}
 
 // 移除内存存储，现在直接使用数据库字段
 // const queueRepeatInfo = new Map<string, {
@@ -629,6 +882,38 @@ function calculateLevel(exp: number) {
   return Math.floor(Math.sqrt(exp / 100)) + 1
 }
 
+// 添加物品到仓库的通用函数
+async function addItemToInventory(characterId: string, itemId: string, quantity: number = 1) {
+  try {
+    const existingItem = await prisma.inventoryItem.findUnique({
+      where: {
+        characterId_itemId: {
+          characterId: characterId,
+          itemId: itemId
+        }
+      }
+    })
+
+    if (existingItem) {
+      await prisma.inventoryItem.update({
+        where: { id: existingItem.id },
+        data: { quantity: existingItem.quantity + quantity }
+      })
+    } else {
+      await prisma.inventoryItem.create({
+        data: {
+          characterId: characterId,
+          itemId: itemId,
+          quantity: quantity
+        }
+      })
+    }
+  } catch (error) {
+    console.error('添加物品到仓库失败:', error)
+    throw error
+  }
+}
+
 // 队列管理函数已移除，现在完全通过Socket直接操作数据库
 
 // 恢复离线队列
@@ -656,7 +941,9 @@ async function restoreOfflineQueues(characterId: string) {
       const taskStartTime = new Date(task.startedAt).getTime()
       const taskElapsed = Date.now() - taskStartTime
       
-      if (taskElapsed >= taskDuration) {
+      const progress = Math.min((taskElapsed / taskDuration) * 100, 100)
+      
+      if (taskElapsed >= taskDuration || progress >= 100) {
         // 任务已完成，处理奖励
         await completeOfflineTask(task)
       } else {
@@ -673,7 +960,7 @@ async function restoreOfflineQueues(characterId: string) {
             resourceName: resource.name,
             totalRepeat: task.totalRepeat || 1,
             currentRepeat: task.currentRepeat || 1,
-            progress: Math.min((taskElapsed / taskDuration) * 100, 100),
+            progress: progress,
             remainingTime: Math.max(0, Math.ceil((taskDuration - taskElapsed) / 1000)),
             estimatedTime: resource.baseTime,
             createdAt: taskStartTime
@@ -907,10 +1194,22 @@ async function addToQueue(socket: AuthenticatedSocket, queueData: any) {
     const queueId = `${socket.characterId}:queue`
     const currentActivity = activeQueues.get(queueId)
     
+    console.log(`[SERVER] 检查当前活动状态:`, {
+      hasCurrentActivity: !!currentActivity,
+      currentActivityQueueId: currentActivity?.queueData?.id,
+      allPendingIds: pending.map(p => p.id)
+    })
+    
     if (currentActivity && currentActivity.queueData) {
       // 有正在执行的队列，将其设为当前队列，其余为待处理队列
       const currentQueue = pending.find(q => q.id === currentActivity.queueData.id)
       const pendingQueues = pending.filter(q => q.id !== currentActivity.queueData.id)
+      
+      console.log(`[SERVER] 过滤队列结果:`, {
+        foundCurrentQueue: !!currentQueue,
+        pendingQueuesCount: pendingQueues.length,
+        pendingQueuesIds: pendingQueues.map(p => p.id)
+      })
       
       if (currentQueue) {
         // 设置startTime以便客户端能够启动本地进度计算
@@ -930,12 +1229,21 @@ async function addToQueue(socket: AuthenticatedSocket, queueData: any) {
       
       if (pending.length > 0) {
         console.log(`[SERVER] 当前没有活动，开始执行第一个队列`)
-        await startQueueActivity(socket, pending[0])
+        
+        // 设置正确的开始时间和进度
+        const firstQueue = {
+          ...pending[0],
+          startTime: Date.now(),
+          progress: 0,
+          remainingTime: pending[0].baseTime
+        }
+        
+        await startQueueActivity(socket, firstQueue)
         
         // 第一个队列开始执行，其余为待处理队列
-        socket.emit('current_queue_updated', pending[0])
+        socket.emit('current_queue_updated', firstQueue)
         socket.emit('queue_updated', pending.slice(1))
-        console.log(`[SERVER] 发送current_queue_updated事件:`, pending[0])
+        console.log(`[SERVER] 发送current_queue_updated事件:`, firstQueue)
         console.log(`[SERVER] 发送queue_updated事件，待处理队列数量: ${pending.slice(1).length}`)
       } else {
         socket.emit('queue_updated', [])
@@ -1235,29 +1543,77 @@ async function removeFromQueue(socket: AuthenticatedSocket, queueId: string) {
   const currentActivity = activeQueues.get(`${socket.characterId}:queue`)
   
   if (currentActivity && currentActivity.queueData) {
-    // 有正在执行的队列，将其设为当前队列，其余为待处理队列
-    const currentQueue = pending.find(q => q.id === currentActivity.queueData.id)
-    const pendingQueues = pending.filter(q => q.id !== currentActivity.queueData.id)
-    
-    if (currentQueue) {
-      // 保持当前队列的进度状态，不重置进度
-      const queueWithProgress = {
-        ...currentQueue,
-        startTime: currentActivity.startTime || Date.now(),
-        // 不重置进度，让客户端保持当前进度
-        preserveProgress: true
+    // 检查删除的是否是当前正在执行的队列
+    if (currentActivity.queueData.id === queueId) {
+      // 删除的是当前队列，停止当前活动并开始下一个
+      clearInterval(currentActivity.interval)
+      activeQueues.delete(`${socket.characterId}:queue`)
+      console.log(`[SERVER] 删除了当前正在执行的队列: ${queueId}`)
+      
+      if (pending.length > 0) {
+        // 有待处理队列，开始第一个
+        const nextQueue = pending[0]
+        const remainingQueues = pending.slice(1)
+        
+        socket.emit('current_queue_updated', {
+          ...nextQueue,
+          progress: 0,
+          remainingTime: nextQueue.baseTime,
+          startTime: Date.now()
+        })
+        socket.emit('queue_updated', remainingQueues)
+        
+        // 开始执行下一个队列
+        await startQueueActivity(socket, nextQueue)
+        console.log(`[SERVER] 自动开始下一个队列: ${nextQueue.id}`)
+      } else {
+        // 没有待处理队列了
+        socket.emit('current_queue_updated', null)
+        socket.emit('queue_updated', [])
+        console.log(`[SERVER] 所有队列已清空`)
       }
-      socket.emit('current_queue_updated', queueWithProgress)
-      console.log(`[SERVER] 发送current_queue_updated事件(保持进度):`, queueWithProgress)
+    } else {
+      // 删除的是待处理队列，保持当前队列不变
+      const currentQueue = pending.find(q => q.id === currentActivity.queueData.id)
+      const pendingQueues = pending.filter(q => q.id !== currentActivity.queueData.id)
+      
+      if (currentQueue) {
+        // 保持当前队列的进度状态，不重置进度
+        const queueWithProgress = {
+          ...currentQueue,
+          startTime: currentActivity.startTime || Date.now(),
+          preserveProgress: true
+        }
+        socket.emit('current_queue_updated', queueWithProgress)
+        console.log(`[SERVER] 发送current_queue_updated事件(保持进度):`, queueWithProgress)
+      }
+      
+      socket.emit('queue_updated', pendingQueues)
+      console.log(`[SERVER] 发送queue_updated事件，待处理队列数量: ${pendingQueues.length}`)
     }
-    
-    socket.emit('queue_updated', pendingQueues)
-    console.log(`[SERVER] 发送queue_updated事件，待处理队列数量: ${pendingQueues.length}`)
   } else {
     // 没有正在执行的队列
-    socket.emit('current_queue_updated', null)
-    socket.emit('queue_updated', pending)
-    console.log(`[SERVER] 发送queue_updated事件，待处理队列数量: ${pending.length}`)
+    if (pending.length > 0) {
+      // 有待处理队列，开始第一个
+      const nextQueue = pending[0]
+      const remainingQueues = pending.slice(1)
+      
+      socket.emit('current_queue_updated', {
+        ...nextQueue,
+        progress: 0,
+        remainingTime: nextQueue.baseTime,
+        startTime: Date.now()
+      })
+      socket.emit('queue_updated', remainingQueues)
+      
+      // 开始执行队列
+      await startQueueActivity(socket, nextQueue)
+      console.log(`[SERVER] 开始执行队列: ${nextQueue.id}`)
+    } else {
+      socket.emit('current_queue_updated', null)
+      socket.emit('queue_updated', [])
+      console.log(`[SERVER] 没有队列可执行`)
+    }
   }
 }
 
@@ -1379,7 +1735,8 @@ async function startQueueActivity(socket: AuthenticatedSocket, queueData: any) {
     // 使用队列数据中的baseTime，如果没有则使用资源的baseTime
     const baseTime = queueData.baseTime || resource.baseTime
     const duration = baseTime * 1000 // 转换为毫秒
-    const startTime = Date.now()
+    // 使用队列数据中的startTime，如果没有则使用当前时间
+    const startTime = queueData.startTime || Date.now()
     
     // 移除queue_progress事件发送，改为客户端本地计算
     const interval = setInterval(() => {
@@ -1441,12 +1798,7 @@ async function completeQueueActivity(socket: AuthenticatedSocket, queueData: any
         }
       })
       
-      console.log(`[SERVER] [DEBUG] 发送重复任务的current_queue_updated事件:`, {
-        ...queueData,
-        progress: 0,
-        remainingTime: queueData.baseTime,
-        startTime: Date.now()
-      })
+      console.log(`[SERVER] [DEBUG] 发送重复任务的current_queue_updated事件:${queueData.resourceName}_当前执行次数${queueData.currentRepeat}_总次数${queueData.totalRepeat}`)
       
       // 立即发送更新的当前队列信息给客户端
       socket.emit('current_queue_updated', {
@@ -1457,9 +1809,12 @@ async function completeQueueActivity(socket: AuthenticatedSocket, queueData: any
       })
       
       // 延迟一小段时间再开始下一次，避免立即重复
-      setTimeout(() => {
-        startQueueActivity(socket, queueData)
-      }, 100)
+      // setTimeout(() => {
+      //   startQueueActivity(socket, {
+      //     ...queueData,
+      //     startTime: Date.now()
+      //   })
+      // }, 1000) // 增加延迟到1秒，避免过快重复
     } else {
       console.log(`[SERVER] 队列任务完全完成 - ID: ${queueData.id}, 活动: ${queueData.activityType}`)
       
@@ -1576,6 +1931,99 @@ function getActivityName(activityType: string): string {
   return names[activityType] || activityType
 }
 
+// 处理离线奖励（仅更新数据库，不发送通知）
+async function processOfflineReward(socket: AuthenticatedSocket, resource: any, type: string) {
+  // 获取角色信息
+  const character = await prisma.character.findUnique({
+    where: { id: socket.characterId }
+  })
+  
+  if (!character) return
+  
+  // 计算奖励
+  const expReward = resource.expReward
+  
+  // 更新角色数据
+  const updates: any = {
+    exp: character.exp + expReward
+  }
+  
+  // 获取当前技能等级用于掉落计算
+  let currentSkillLevel = 1
+  
+  // 更新技能经验并获取当前技能等级
+  switch (type) {
+    case 'mining':
+      updates.miningExp = character.miningExp + expReward
+      currentSkillLevel = character.miningLevel
+      const newMiningLevel = calculateLevel(updates.miningExp)
+      if (newMiningLevel > character.miningLevel) {
+        updates.miningLevel = newMiningLevel
+      }
+      break
+    case 'gathering':
+      updates.gatheringExp = character.gatheringExp + expReward
+      currentSkillLevel = character.gatheringLevel
+      const newGatheringLevel = calculateLevel(updates.gatheringExp)
+      if (newGatheringLevel > character.gatheringLevel) {
+        updates.gatheringLevel = newGatheringLevel
+      }
+      break
+    case 'fishing':
+      updates.fishingExp = character.fishingExp + expReward
+      currentSkillLevel = character.fishingLevel
+      const newFishingLevel = calculateLevel(updates.fishingExp)
+      if (newFishingLevel > character.fishingLevel) {
+        updates.fishingLevel = newFishingLevel
+      }
+      break
+  }
+  
+  // 检查角色等级
+  const newLevel = calculateLevel(updates.exp)
+  if (newLevel > character.level) {
+    updates.level = newLevel
+  }
+  
+  const updatedCharacter = await prisma.character.update({
+    where: { id: socket.characterId },
+    data: updates
+  })
+  
+  // 计算物品掉落但不发送通知
+  const droppedItems = await calculateItemDrops(type, currentSkillLevel, resource)
+  
+  // 添加掉落的物品到仓库（静默添加）
+  for (const drop of droppedItems) {
+    const existingItem = await prisma.inventoryItem.findUnique({
+      where: {
+        characterId_itemId: {
+          characterId: socket.characterId!,
+          itemId: drop.itemId
+        }
+      }
+    })
+    
+    if (existingItem) {
+      await prisma.inventoryItem.update({
+        where: { id: existingItem.id },
+        data: { quantity: existingItem.quantity + drop.quantity }
+      })
+    } else {
+      await prisma.inventoryItem.create({
+        data: {
+          characterId: socket.characterId!,
+          itemId: drop.itemId,
+          quantity: drop.quantity
+        }
+      })
+    }
+  }
+  
+  console.log(`[SERVER] 离线奖励处理完成（无通知）: ${expReward}经验, ${droppedItems.length}个物品`)
+}
+
+// 处理在线奖励（更新数据库并发送通知）
 async function processActivityReward(socket: AuthenticatedSocket, resource: any, type: string) {
   // 获取角色信息
   const character = await prisma.character.findUnique({

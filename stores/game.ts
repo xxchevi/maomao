@@ -99,14 +99,13 @@ export const useGameStore = defineStore('game', {
           reconnectionAttempts: 5,
           reconnectionDelay: 1000
         })
+        
+        // 清理之前可能存在的监听器
+        this.socket.removeAllListeners()
 
         this.socket.on('connect', () => {
           this.isConnected = true
           console.log('[CLIENT] Socket连接成功')
-          
-          // 连接成功后请求恢复队列状态
-          console.log('[CLIENT] 发送restore_queues请求')
-          this.socket?.emit('restore_queues')
         })
 
         this.socket.on('disconnect', () => {
@@ -164,8 +163,13 @@ export const useGameStore = defineStore('game', {
         this.socket.on('current_queue_updated', (currentQueue) => {
           console.log('[CLIENT] [DEBUG] 收到current_queue_updated事件，当前队列:', currentQueue)
           if (currentQueue) {
+            // 检查是否需要保持当前进度（刷新页面时）
+            const shouldPreserveProgress = currentQueue.preserveProgress && this.currentQueue && this.currentQueue.id === currentQueue.id
+            
             // 使用服务器提供的 startTime，如果没有则使用当前时间
             const startTime = currentQueue.startTime || Date.now()
+            // 如果需要保持进度，使用当前进度；否则使用服务器提供的进度
+            const progress = shouldPreserveProgress ? this.activityProgress : (currentQueue.progress || 0)
             
             console.log('[CLIENT] [DEBUG] 更新当前队列:', {
               id: currentQueue.id,
@@ -175,20 +179,27 @@ export const useGameStore = defineStore('game', {
               totalRepeat: currentQueue.totalRepeat,
               serverStartTime: currentQueue.startTime,
               useStartTime: startTime,
-              serverProgress: currentQueue.progress
+              serverProgress: currentQueue.progress,
+              useProgress: progress,
+              preserveProgress: currentQueue.preserveProgress,
+              shouldPreserveProgress: shouldPreserveProgress
             })
             
             this.currentQueue = {
               ...currentQueue,
               startTime: startTime,
-              progress: 0 // 重置进度，让本地计算接管
+              progress: progress // 使用计算出的进度
             }
             this.currentActivity = currentQueue.activityType
             this.activityTarget = this.resources.find(r => r.id === currentQueue.resourceId)
-            this.activityProgress = 0 // 重置进度
+            this.activityProgress = progress // 使用计算出的进度
             
-            // 启动本地进度计算
-            this.startLocalProgressCalculation()
+            // 如果不需要保持进度或者没有正在运行的进度计算，启动本地进度计算
+            if (!shouldPreserveProgress || !this.progressTimer) {
+              this.startLocalProgressCalculation()
+            } else {
+              console.log('[CLIENT] [DEBUG] 保持现有进度计算，不重新启动')
+            }
           } else {
             console.log('[CLIENT] [DEBUG] 清空当前队列')
             this.currentQueue = null
@@ -220,6 +231,8 @@ export const useGameStore = defineStore('game', {
 
     disconnectSocket() {
       if (this.socket) {
+        // 清理所有事件监听器
+        this.socket.removeAllListeners()
         this.socket.disconnect()
         this.socket = null
         this.isConnected = false
@@ -259,7 +272,10 @@ export const useGameStore = defineStore('game', {
         const elapsed = now - startTime
         const duration = this.currentQueue.baseTime * 1000 // 转换为毫秒
         
-        const progress = Math.min((elapsed / duration) * 100, 100)
+        // 计算基于实际经过时间的进度
+        const timeBasedProgress = Math.min((elapsed / duration) * 100, 100)
+        // 直接使用时间计算的进度，不再依赖初始进度
+        const progress = timeBasedProgress
         const remainingTime = Math.max(0, Math.ceil((duration - elapsed) / 1000))
         
         // 详细调试信息
@@ -320,6 +336,7 @@ export const useGameStore = defineStore('game', {
 
         // 通过Socket获取队列数据
         console.log('[CLIENT] 通过Socket请求恢复队列状态')
+        
         if (this.socket) {
           this.socket.emit('restore_queues')
         }

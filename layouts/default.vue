@@ -113,10 +113,9 @@ const logout = async () => {
 
 // 在客户端初始化时检查认证状态
 onMounted(async () => {
-  await authStore.checkAuth()
+  // await authStore.checkAuth()
   if (authStore.isLoggedIn) {
     gameStore.initSocket()
-    await gameStore.loadGameData()
   }
 })
 </script>

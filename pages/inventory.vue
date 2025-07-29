@@ -69,7 +69,7 @@
         >
           <!-- 物品图标 -->
           <div class="text-2xl">
-            {{ getItemIcon(inventoryItem?.item?.type) }}
+            {{ getItemIcon(inventoryItem?.item?.type, inventoryItem?.item?.name) }}
           </div>
           
           <!-- 数量标识 -->
@@ -77,7 +77,7 @@
             v-if="inventoryItem?.quantity > 1"
             class="absolute -top-1 -right-1 bg-blue-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center"
           >
-            {{ inventoryItem?.quantity > 99 ? '99+' : inventoryItem?.quantity }}
+            {{ inventoryItem?.quantity }}
           </div>
           
           <!-- 稀有度标识 -->
@@ -134,7 +134,7 @@
           <div class="flex items-center space-x-4">
             <div :class="['inventory-slot', `rarity-${selectedItem?.item?.rarity}`]">
               <div class="text-3xl">
-                {{ getItemIcon(selectedItem?.item?.type) }}
+                {{ getItemIcon(selectedItem?.item?.type, selectedItem?.item?.name) }}
               </div>
             </div>
             
@@ -215,17 +215,82 @@ const rareItems = computed(() => {
   ).length
 })
 
-const getItemIcon = (type) => {
-  const icons = {
+const getItemIcon = (type, name) => {
+  // 优先根据物品名称匹配图标
+  if (name) {
+    const nameIcons = {
+      // 矿石类
+      '铜矿石': '🟫',
+      '铁矿石': '⚫',
+      '银矿石': '⚪',
+      '金矿石': '🟡',
+      '秘银矿石': '🔵',
+      '精金矿石': '🟣',
+      
+      // 草药类
+      '野草': '🌱',
+      '草药': '🌿',
+      '魔法花': '🌸',
+      '古老树根': '🪵',
+      '神秘蘑菇': '🍄',
+      '龙血草': '🌺',
+      
+      // 食物类
+      '蓝莓': '🫐',
+      '面包': '🍞',
+      '烤鱼': '🐟',
+      '蘑菇汤': '🍲',
+      '草药茶': '🍵',
+      '能量药水': '🧪',
+      
+      // 鱼类
+      '小鱼': '🐠',
+      '鲤鱼': '🐟',
+      '金鱼': '🐠',
+      '鲨鱼': '🦈',
+      '龙鱼': '🐉',
+      '传说之鱼': '🌟',
+      
+      // 工具类
+      '铜镐': '⛏️',
+      '铁镐': '🔨',
+      '银镐': '⚒️',
+      '金镐': '🛠️',
+      '秘银镐': '⚡',
+      '精金镐': '💎',
+      
+      '铜斧': '🪓',
+      '铁斧': '🔪',
+      '银斧': '⚔️',
+      '金斧': '🗡️',
+      '秘银斧': '⚡',
+      '精金斧': '💎',
+      
+      '简易鱼竿': '🎣',
+      '铁鱼竿': '🎣',
+      '银鱼竿': '🎣',
+      '金鱼竿': '🎣',
+      '秘银鱼竿': '🎣',
+      '精金鱼竿': '🎣'
+    }
+    
+    if (nameIcons[name]) {
+      return nameIcons[name]
+    }
+  }
+  
+  // 如果没有匹配的名称图标，则根据类型匹配
+  const typeIcons = {
     resource: '💎',
     tool: '🔧',
     food: '🍎',
     material: '📦',
+    consumable: '🍯',
     ore: '⛏️',
     herb: '🌿',
     fish: '🐟'
   }
-  return icons[type] || '📦'
+  return typeIcons[type] || '📦'
 }
 
 const getTypeName = (type) => {

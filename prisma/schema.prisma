@@ -116,6 +116,7 @@ model OfflineTask {
   // 重复次数
   totalRepeat  Int      @default(1) // 总重复次数
   currentRepeat Int     @default(1) // 当前重复次数
+  lastProcessedRepeat Int @default(0) // 最后处理奖励的重复次数
   
   // 奖励
   expReward   Int       @default(0)

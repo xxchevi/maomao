@@ -7,7 +7,7 @@ export default defineNuxtPlugin(async () => {
     await nextTick()
     
     // 在客户端启动时检查认证状态
-    await authStore.checkAuth()
+    // await authStore.checkAuth()
     
     // 如果已登录，初始化游戏相关功能
     if (authStore.isLoggedIn) {

@@ -193,6 +193,17 @@ export default defineNitroPlugin(async (nitroApp) => {
             console.log(`User ${socket.userId} disconnected`)
             stopActivity(socket)
 
+            // 清理队列活动
+            if (socket.characterId) {
+              const queueId = `${socket.characterId}:queue`
+              const queueActivity = activeQueues.get(queueId)
+              if (queueActivity) {
+                clearInterval(queueActivity.interval)
+                activeQueues.delete(queueId)
+                console.log(`[SERVER] 清理用户 ${socket.characterId} 的队列活动`)
+              }
+            }
+
             // 更新角色最后在线时间
             if (socket.characterId) {
               try {
@@ -246,6 +257,11 @@ async function getActiveQueuesFromDatabase(characterId: string) {
     const totalRepeat = task.totalRepeat || 1
     const currentRepeat = task.currentRepeat || 1
     
+    // 计算预估完成时间戳
+    const remainingRepeats = totalRepeat - currentRepeat + 1
+    const estimatedDurationSeconds = baseTime * remainingRepeats
+    const estimatedCompletionTime = new Date(Date.now() + estimatedDurationSeconds * 1000)
+    
     return {
       id: task.id,
       activityType: task.type,
@@ -258,7 +274,8 @@ async function getActiveQueuesFromDatabase(characterId: string) {
       expReward: resource?.expReward || 10,
       progress: 0,
       remainingTime: baseTime,
-      estimatedTime: baseTime * (totalRepeat - currentRepeat + 1),
+      estimatedTime: baseTime * remainingRepeats, // 保留原有的秒数用于兼容
+      estimatedCompletionTime: estimatedCompletionTime.toISOString(),
       createdAt: task.createdAt.toISOString()
     }
   })
@@ -282,9 +299,15 @@ async function syncQueueStateToClient(socket: AuthenticatedSocket, options: {
       const pendingQueues = queues.filter(q => q.id !== currentActivity.queueData.id)
       
       if (currentQueue) {
+        // 计算当前队列的预估完成时间
+        const remainingRepeats = currentQueue.totalRepeat - currentQueue.currentRepeat + 1
+        const estimatedDurationSeconds = currentQueue.baseTime * remainingRepeats
+        const estimatedCompletionTime = new Date(Date.now() + estimatedDurationSeconds * 1000)
+        
         const queueWithState = {
           ...currentQueue,
-          startTime: currentActivity.startTime || Date.now()
+          startTime: currentActivity.startTime || Date.now(),
+          estimatedCompletionTime: estimatedCompletionTime.toISOString()
         }
         
         if (options.preserveCurrentProgress) {
@@ -340,6 +363,8 @@ async function restoreUserQueues(socket: any) {
       // 有正在执行的队列
       const currentQueue = queues.find(q => q.id === currentActivity.queueData.id)
       if (currentQueue) {
+        // await syncQueueStateToClient(socket, { startFirstQueue: true })
+        
         await startFirstQueue(socket, queues)
       } else {
         // 当前活动队列不存在，清理并开始新队列
@@ -408,9 +433,22 @@ function startOfflineTaskProcessor() {
 // 处理所有离线任务
 async function processOfflineTasks() {
   try {
+    // 获取所有在线用户的角色ID
+    const onlineCharacterIds = new Set()
+    for (const [key, value] of activeQueues.entries()) {
+      if (key.includes(':queue')) {
+        const characterId = key.split(':')[0]
+        onlineCharacterIds.add(characterId)
+      }
+    }
+
     const activeTasks = await prisma.offlineTask.findMany({
       where: {
-        status: 'active'
+        status: 'active',
+        // 只处理离线用户的任务，避免干扰在线队列
+        characterId: {
+          notIn: Array.from(onlineCharacterIds)
+        }
       },
       include: {
         character: true
@@ -820,7 +858,7 @@ async function addToQueue(socket: AuthenticatedSocket, queueData: any) {
     const newQueue = {
       ...queueData,
       id: `queue_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      totalRepeat: queueData.repeatCount || 1,
+      totalRepeat: queueData.totalRepeat || 1,
       currentRepeat: 1,
       createdAt: new Date().toISOString()
     }
@@ -996,6 +1034,19 @@ async function startQueueActivity(socket: AuthenticatedSocket, queueData: any) {
       startTime
     })
 
+    // 计算预估完成时间并发送给客户端
+    const remainingRepeats = queueData.totalRepeat - queueData.currentRepeat + 1
+    const estimatedDurationSeconds = baseTime * remainingRepeats
+    const estimatedCompletionTime = new Date(Date.now() + estimatedDurationSeconds * 1000)
+    
+    const queueWithEstimatedTime = {
+      ...queueData,
+      startTime,
+      estimatedCompletionTime: estimatedCompletionTime.toISOString()
+    }
+    
+    socket.emit('current_queue_updated', queueWithEstimatedTime)
+
     // console.log(`[SERVER] 开始队列活动 - 用户: ${socket.characterId}, 活动: ${queueData.activityType}, 当前重复: ${queueData.currentRepeat}/${queueData.totalRepeat}`)
 
   } catch (error) {
@@ -1050,12 +1101,12 @@ async function completeQueueActivity(socket: AuthenticatedSocket, queueData: any
       }
 
       // 立即发送更新的当前队列信息给客户端
-      await syncQueueStateToClient(socket, { startFirstQueue: true })
+      socket.emit('current_queue_updated', nextRepeatQueue)
 
       // 重新启动队列活动以继续下一次重复
       setTimeout(() => {
         startQueueActivity(socket, nextRepeatQueue)
-        // console.log(`[SERVER] 重新启动队列活动进行第${queueData.currentRepeat}次重复`)
+        console.log(`[SERVER] 重新启动队列活动进行第${queueData.currentRepeat}次重复`)
       }, 500) // 短暂延迟避免立即重复
     } else {
       console.log(`[SERVER] 队列任务完全完成 - ID: ${queueData.id}, 活动: ${queueData.activityType}`)

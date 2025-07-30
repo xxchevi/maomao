@@ -33,7 +33,7 @@
           
           <div class="flex justify-between items-center text-xs text-gray-500">
             <span>剩余时间: {{ formatTime(gameStore.currentQueue.remainingTime || 0) }}</span>
-            <span>总进度: {{ Math.floor((((gameStore.currentQueue.currentRepeat || 1) - 1 + (gameStore.currentQueue.progress || 0) / 100) / (gameStore.currentQueue.totalRepeat || 1)) * 100) }}%</span>
+            <span>预计完成: {{ formatDateTime(gameStore.currentQueue.estimatedCompletionTime) }}</span>
           </div>
         </div>
         
@@ -54,7 +54,7 @@
         >
           <div class="flex-1">
             <div class="font-medium text-sm">{{ getActivityName(queue.activityType) }} - {{ queue.resourceName }}</div>
-            <div class="text-xs text-gray-600">执行 {{ queue.totalRepeat || 1 }} 次 | 预计 {{ formatTime(queue.estimatedTime || 0) }}</div>
+            <div class="text-xs text-gray-600">剩余 {{ (queue.totalRepeat || 1) - (queue.currentRepeat || 1) + 1 }} 次 | 预计完成: {{ formatDateTime(queue.estimatedCompletionTime) }}</div>
           </div>
           
           <div class="flex items-center space-x-2">
@@ -108,6 +108,24 @@ const formatTime = (seconds) => {
     const hours = Math.floor(validSeconds / 3600)
     const minutes = Math.floor((validSeconds % 3600) / 60)
     return `${hours}小时${minutes}分钟`
+  }
+}
+
+const formatDateTime = (isoString) => {
+  if (!isoString) return '未知时间'
+  
+  try {
+    const date = new Date(isoString)
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    const hours = String(date.getHours()).padStart(2, '0')
+    const minutes = String(date.getMinutes()).padStart(2, '0')
+    const seconds = String(date.getSeconds()).padStart(2, '0')
+    
+    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
+  } catch (error) {
+    return '时间格式错误'
   }
 }
 

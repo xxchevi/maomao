@@ -196,6 +196,7 @@ export const useGameStore = defineStore('game', {
             
             // 如果不需要保持进度或者没有正在运行的进度计算，启动本地进度计算
             if (!shouldPreserveProgress || !this.progressTimer) {
+              console.log('如果不需要保持进度或者没有正在运行的进度计算，启动本地进度计算')
               this.startLocalProgressCalculation()
             } else {
               console.log('[CLIENT] [DEBUG] 保持现有进度计算，不重新启动')

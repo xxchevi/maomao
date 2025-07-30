@@ -339,31 +339,8 @@ async function restoreUserQueues(socket: any) {
     if (currentActivity?.queueData) {
       // 有正在执行的队列
       const currentQueue = queues.find(q => q.id === currentActivity.queueData.id)
-      const pendingQueues = queues.filter(q => q.id !== currentActivity.queueData.id)
-      console.log(`currentQueue:${currentQueue.currentRepeat}`)
       if (currentQueue) {
-        // 保持现有队列状态，重新计算进度
-        const startTime = currentActivity.startTime || Date.now()
-        const elapsed = Date.now() - startTime
-        const duration = currentQueue.baseTime * 1000
-        const progress = Math.min((elapsed / duration) * 100, 100)
-        const remainingTime = Math.max(0, Math.ceil((duration - elapsed) / 1000))
-
-        const queueWithServerTime = {
-          ...currentQueue,
-          startTime,
-          progress,
-          remainingTime
-        }
-        if (progress>=99.9) {
-          setTimeout(()=>{
-            restoreUserQueues(socket)
-          }, 100)
-          return
-        }
-        socket.emit('current_queue_updated', queueWithServerTime)
-        socket.emit('queue_updated', pendingQueues)
-        console.log(`[SERVER] 恢复现有队列，进度: ${progress.toFixed(1)}%, 待处理: ${pendingQueues.length}`)
+        await startFirstQueue(socket, queues)
       } else {
         // 当前活动队列不存在，清理并开始新队列
         clearInterval(currentActivity.interval)

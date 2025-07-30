@@ -1101,13 +1101,13 @@ async function completeQueueActivity(socket: AuthenticatedSocket, queueData: any
       }
 
       // 立即发送更新的当前队列信息给客户端
-      socket.emit('current_queue_updated', nextRepeatQueue)
+      // socket.emit('current_queue_updated', nextRepeatQueue)
 
       // 重新启动队列活动以继续下一次重复
       setTimeout(() => {
         startQueueActivity(socket, nextRepeatQueue)
         console.log(`[SERVER] 重新启动队列活动进行第${queueData.currentRepeat}次重复`)
-      }, 500) // 短暂延迟避免立即重复
+      }, 100) // 短暂延迟避免立即重复
     } else {
       console.log(`[SERVER] 队列任务完全完成 - ID: ${queueData.id}, 活动: ${queueData.activityType}`)
 

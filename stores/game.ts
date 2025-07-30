@@ -301,6 +301,7 @@ export const useGameStore = defineStore('game', {
         if (progress >= 100) {
           console.log('[CLIENT] [DEBUG] 进度达到100%，停止本地计算，等待服务器queue_completed事件')
           this.stopLocalProgressCalculation()
+          this.socket.emit('restore_queues')
         }
       }, 100)
     },
